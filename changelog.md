@@ -5,3 +5,5 @@
 # 1.0.2 
 - Fix Bug Game Pause
 - Support For MacOS? Probably.
+# 1.0.3
+- Leave Of Original 
