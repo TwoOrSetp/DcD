@@ -261,6 +261,19 @@ const fn default_rapid_pause_threshold() -> u32 {
     5 // Maximum rapid pause/resume cycles before triggering audio reset
 }
 
+// Enhanced Recording Sync default values
+const fn default_target_fps() -> f64 {
+    60.0 // Default target FPS for sync calculations
+}
+
+const fn default_fps_compensation_factor() -> f64 {
+    1.0 // No compensation by default
+}
+
+const fn default_adaptive_sync_threshold() -> f64 {
+    0.016 // ~16ms threshold for adaptive sync adjustments (1 frame at 60fps)
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum PendingAudioAction {
@@ -390,6 +403,19 @@ pub struct Config {
     pub ui_scale: f32,
     #[serde(default)]
     pub toast_visibility: ToastVisibility,
+    // Enhanced Recording Sync Features
+    #[serde(default = "bool::default")]
+    pub fps_sync_enabled: bool,
+    #[serde(default = "default_target_fps")]
+    pub target_fps: f64,
+    #[serde(default = "default_fps_compensation_factor")]
+    pub fps_compensation_factor: f64,
+    #[serde(default = "bool::default")]
+    pub advanced_sync_features: bool,
+    #[serde(default = "bool::default")]
+    pub frame_time_smoothing: bool,
+    #[serde(default = "default_adaptive_sync_threshold")]
+    pub adaptive_sync_threshold: f64,
 }
 
 impl Config {
@@ -599,6 +625,12 @@ pub struct Bot {
     pub rapid_pause_resume_count: u32,
     pub audio_system_needs_reset: bool,
     pub pending_audio_actions: Vec<PendingAudioAction>,
+    // Enhanced FPS-based sync tracking
+    pub fps_history: Vec<f64>,
+    pub last_frame_time: Instant,
+    pub current_fps: f64,
+    pub frame_time_buffer: Vec<f64>,
+    pub fps_compensation_active: bool,
 }
 
 impl Default for Bot {
@@ -663,6 +695,12 @@ impl Default for Bot {
             audio_latency_ms: 0.0,
             click_processing_time_us: 0,
             last_performance_check: now,
+            // Initialize FPS tracking
+            fps_history: Vec::with_capacity(60), // Store last 60 FPS samples
+            last_frame_time: now,
+            current_fps: 60.0,
+            frame_time_buffer: Vec::with_capacity(10),
+            fps_compensation_active: false,
         }
     }
 }
@@ -678,93 +716,7 @@ fn help_text<R>(ui: &mut egui::Ui, help: &str, add_contents: impl FnOnce(&mut eg
     });
 }
 
-/// Create a modern button with enhanced styling
-fn modern_button(ui: &mut egui::Ui, text: &str, color: egui::Color32, size: Option<egui::Vec2>) -> egui::Response {
-    let button = egui::Button::new(text)
-        .fill(color)
-        .rounding(egui::Rounding::same(8.0));
 
-    if let Some(size) = size {
-        ui.add_sized(size, button)
-    } else {
-        ui.add(button)
-    }
-}
-
-/// Create a modern toggle switch with enhanced styling and animation
-fn modern_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str, description: &str) -> egui::Response {
-    let toggle_size = egui::Vec2::new(40.0, 22.0);
-    let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
-
-    if response.clicked() {
-        *value = !*value;
-    }
-
-    // Enhanced toggle background with hover effect
-    let rounding = egui::Rounding::same(11.0);
-    let bg_color = if *value {
-        egui::Color32::from_rgb(34, 197, 94)
-    } else if response.hovered() {
-        egui::Color32::from_gray(70)
-    } else {
-        egui::Color32::from_gray(60)
-    };
-
-    // Add subtle shadow
-    let shadow_rect = rect.translate(egui::Vec2::new(0.0, 1.0));
-    ui.painter().rect_filled(shadow_rect, rounding, egui::Color32::from_black_alpha(20));
-    ui.painter().rect_filled(rect, rounding, bg_color);
-
-    // Enhanced knob with shadow and hover effect
-    let knob_size = 16.0;
-    let knob_margin = 3.0;
-    let knob_offset = if *value {
-        rect.right() - knob_size - knob_margin
-    } else {
-        rect.left() + knob_margin
-    };
-
-    let knob_center = egui::Pos2::new(knob_offset + knob_size/2.0, rect.center().y);
-
-    // Knob shadow
-    ui.painter().circle_filled(
-        knob_center + egui::Vec2::new(0.0, 1.0),
-        knob_size/2.0,
-        egui::Color32::from_black_alpha(30)
-    );
-
-    // Knob with hover effect
-    let knob_color = if response.hovered() {
-        egui::Color32::from_gray(250)
-    } else {
-        egui::Color32::WHITE
-    };
-
-    ui.painter().circle_filled(
-        knob_center,
-        knob_size/2.0,
-        knob_color
-    );
-
-    ui.add_space(12.0);
-    ui.vertical(|ui| {
-        ui.label(
-            egui::RichText::new(label)
-                .size(14.0)
-                .strong()
-                .color(if *value { egui::Color32::WHITE } else { egui::Color32::from_gray(160) })
-        );
-        if !description.is_empty() {
-            ui.label(
-                egui::RichText::new(description)
-                    .size(10.0)
-                    .color(egui::Color32::from_gray(140))
-            );
-        }
-    });
-
-    response
-}
 
 /// Value is always min clamped with 1.
 fn u32_edit_field_min1(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
@@ -1436,12 +1388,15 @@ impl Bot {
             }
         };
 
-        if !self.conf.enhanced_recording_sync {
+        // Update FPS tracking for enhanced sync
+        self.update_fps_tracking();
+
+        if !self.conf.enhanced_recording_sync && !self.conf.fps_sync_enabled && !self.conf.advanced_sync_features {
             return raw_game_time;
         }
 
-        // Enhanced timing for recording synchronization
-        self.get_synchronized_time(raw_game_time)
+        // Use enhanced synchronization with FPS compensation and advanced features
+        self.get_enhanced_synchronized_time(raw_game_time)
     }
 
     /// Legacy time method for backward compatibility
@@ -1627,6 +1582,98 @@ impl Bot {
         // Update state for next iteration
         self.last_game_time = raw_game_time;
         self.last_real_time = current_real_time;
+    }
+
+    /// Update FPS tracking for enhanced sync calculations
+    fn update_fps_tracking(&mut self) {
+        if !self.conf.fps_sync_enabled {
+            return;
+        }
+
+        let current_time = Instant::now();
+        let frame_delta = current_time.duration_since(self.last_frame_time).as_secs_f64();
+
+        if frame_delta > 0.0 {
+            let current_fps = 1.0 / frame_delta;
+
+            // Add to FPS history
+            self.fps_history.push(current_fps);
+            if self.fps_history.len() > 60 {
+                self.fps_history.remove(0);
+            }
+
+            // Calculate smoothed FPS
+            if !self.fps_history.is_empty() {
+                self.current_fps = self.fps_history.iter().sum::<f64>() / self.fps_history.len() as f64;
+            }
+
+            // Add to frame time buffer for smoothing
+            if self.conf.frame_time_smoothing {
+                self.frame_time_buffer.push(frame_delta);
+                if self.frame_time_buffer.len() > 10 {
+                    self.frame_time_buffer.remove(0);
+                }
+            }
+
+            // Check if FPS compensation should be active
+            let fps_deviation = (self.current_fps - self.conf.target_fps).abs();
+            self.fps_compensation_active = fps_deviation > self.conf.adaptive_sync_threshold * self.conf.target_fps;
+
+            self.last_frame_time = current_time;
+        }
+    }
+
+    /// Get FPS-compensated timing for enhanced recording sync
+    fn get_fps_compensated_time(&mut self, base_time: f64) -> f64 {
+        if !self.conf.fps_sync_enabled || !self.fps_compensation_active {
+            return base_time;
+        }
+
+        // Calculate FPS compensation factor
+        let fps_ratio = self.current_fps / self.conf.target_fps;
+        let compensation = (fps_ratio - 1.0) * self.conf.fps_compensation_factor;
+
+        // Apply frame time smoothing if enabled
+        let smoothed_compensation = if self.conf.frame_time_smoothing && !self.frame_time_buffer.is_empty() {
+            let avg_frame_time = self.frame_time_buffer.iter().sum::<f64>() / self.frame_time_buffer.len() as f64;
+            let target_frame_time = 1.0 / self.conf.target_fps;
+            let frame_compensation = (avg_frame_time - target_frame_time) * self.conf.fps_compensation_factor;
+            (compensation + frame_compensation) * 0.5
+        } else {
+            compensation
+        };
+
+        base_time + (base_time * smoothed_compensation)
+    }
+
+    /// Enhanced sync with FPS compensation and advanced features
+    fn get_enhanced_synchronized_time(&mut self, raw_game_time: f64) -> f64 {
+        // Start with basic synchronized time
+        let base_sync_time = if self.conf.enhanced_recording_sync {
+            self.get_synchronized_time(raw_game_time)
+        } else {
+            raw_game_time
+        };
+
+        // Apply FPS compensation if enabled
+        let fps_compensated_time = self.get_fps_compensated_time(base_sync_time);
+
+        // Apply advanced sync features if enabled
+        if self.conf.advanced_sync_features {
+            // Additional smoothing for very stable recording sync
+            let smoothing_factor = self.conf.time_smoothing_factor * 0.5; // More conservative for advanced mode
+            let time_delta = fps_compensated_time - self.last_game_time;
+
+            if time_delta.abs() < self.conf.adaptive_sync_threshold {
+                // Small changes - apply heavy smoothing
+                self.last_game_time + (time_delta * smoothing_factor)
+            } else {
+                // Large changes - less smoothing to maintain responsiveness
+                fps_compensated_time
+            }
+        } else {
+            fps_compensated_time
+        }
     }
 
     /// Record input timestamp for instant response tracking
@@ -1933,379 +1980,49 @@ impl Bot {
         // draw overlay
         let modal = Arc::new(Mutex::new(Modal::new(ctx, "global_modal")));
 
-        // Enhanced modern styling with improved theme
+        // Simple default styling
         ctx.style_mut(|s| {
             s.interaction.tooltip_delay = 0.0;
-
-            // Modern shadow effects with better depth
-            let shadow = Shadow {
-                offset: [2.0, 4.0].into(),
-                blur: 16.0,
-                spread: 0.0,
-                color: egui::Color32::from_black_alpha(120),
-            };
-            s.visuals.popup_shadow = shadow;
-            s.visuals.window_shadow = Shadow {
-                offset: [0.0, 8.0].into(),
-                blur: 32.0,
-                spread: 0.0,
-                color: egui::Color32::from_black_alpha(80),
-            };
-
-            // Enhanced visual styling with modern design
-            s.visuals.window_rounding = egui::Rounding::same(16.0);
-            s.visuals.menu_rounding = egui::Rounding::same(12.0);
-            s.visuals.indent_has_left_vline = true;
-            s.visuals.collapsing_header_frame = true;
-
-            // Modern dark theme color scheme
-            s.visuals.dark_mode = true;
-            s.visuals.override_text_color = Some(egui::Color32::from_gray(240));
-            s.visuals.panel_fill = egui::Color32::from_gray(16);
-            s.visuals.window_fill = egui::Color32::from_gray(20);
-            s.visuals.extreme_bg_color = egui::Color32::from_gray(8);
-
-            // Widget colors with better contrast and modern accent
-            s.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_gray(28);
-            s.visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::from_gray(200);
-
-            s.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(35);
-            s.visuals.widgets.inactive.fg_stroke.color = egui::Color32::from_gray(220);
-            s.visuals.widgets.inactive.rounding = egui::Rounding::same(8.0);
-
-            s.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(60, 60, 70);
-            s.visuals.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
-            s.visuals.widgets.hovered.rounding = egui::Rounding::same(8.0);
-
-            s.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(100, 150, 255);
-            s.visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
-            s.visuals.widgets.active.rounding = egui::Rounding::same(8.0);
-
-            // Selection colors
-            s.visuals.selection.bg_fill = egui::Color32::from_rgb(100, 150, 255);
-            s.visuals.selection.stroke.color = egui::Color32::from_rgb(120, 170, 255);
-
-            // Enhanced spacing for better visual hierarchy
-            s.spacing.item_spacing = egui::Vec2::new(10.0, 8.0);
-            s.spacing.button_padding = egui::Vec2::new(16.0, 10.0);
-            s.spacing.menu_margin = egui::Margin::same(12.0);
-            s.spacing.indent = 24.0;
-            s.spacing.slider_width = 200.0;
-            s.spacing.combo_width = 120.0;
         });
 
-        // Modern window with glassmorphism effect
+        // Simple window
         egui::Window::new("DcD Live")
-            .title_bar(false)
             .resizable(true)
-            .min_width(480.0)
-            .default_width(580.0)
-            .frame(egui::Frame::window(&ctx.style()).fill(egui::Color32::from_rgba_premultiplied(15, 15, 20, 240)))
             .show(ctx, |ui| {
-                // Modern gradient header with glassmorphism
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 200))
-                    .rounding(egui::Rounding { nw: 20.0, ne: 20.0, sw: 0.0, se: 0.0 })
-                    .inner_margin(egui::Margin::symmetric(24.0, 20.0))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            // Modern app icon with glow effect
-                            let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::hover()).0;
-                            ui.painter().circle_filled(
-                                icon_rect.center(),
-                                16.0,
-                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 40)
-                            );
-                            ui.painter().text(
-                                icon_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "🎵",
-                                egui::FontId::proportional(20.0),
-                                egui::Color32::WHITE,
-                            );
-
-                            ui.add_space(16.0);
-                            ui.vertical(|ui| {
-                                // Modern title with gradient text effect
-                                ui.label(
-                                    egui::RichText::new("DcD Live")
-                                        .size(24.0)
-                                        .strong()
-                                        .color(egui::Color32::WHITE)
-                                );
-                                ui.label(
-                                    egui::RichText::new(format!("Version {} • Next-Gen Audio Engine", built_info::PKG_VERSION))
-                                        .size(11.0)
-                                        .color(egui::Color32::from_gray(180))
-                                );
-                            });
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // Ultra-modern status indicator with animated glow
-                                let (status_color, status_bg, status_text, glow_color) = if self.conf.enabled {
-                                    (egui::Color32::WHITE, egui::Color32::from_rgb(16, 185, 129), "ACTIVE", egui::Color32::from_rgba_premultiplied(16, 185, 129, 60))
-                                } else {
-                                    (egui::Color32::WHITE, egui::Color32::from_rgb(239, 68, 68), "INACTIVE", egui::Color32::from_rgba_premultiplied(239, 68, 68, 60))
-                                };
-
-                                // Glow effect background
-                                let status_rect = ui.allocate_exact_size(egui::Vec2::new(90.0, 28.0), egui::Sense::hover()).0;
-                                ui.painter().rect_filled(
-                                    status_rect.expand(4.0),
-                                    egui::Rounding::same(16.0),
-                                    glow_color
-                                );
-
-                                egui::Frame::none()
-                                    .fill(status_bg)
-                                    .rounding(egui::Rounding::same(14.0))
-                                    .inner_margin(egui::Margin::symmetric(14.0, 7.0))
-                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 30)))
-                                    .show_ui_at(ui, status_rect, |ui| {
-                                        ui.horizontal_centered(|ui| {
-                                            // Animated pulse dot
-                                            let time = ui.input(|i| i.time);
-                                            let pulse = (time * 3.0).sin() * 0.3 + 0.7;
-                                            ui.painter().circle_filled(
-                                                ui.next_widget_position() + egui::Vec2::new(6.0, 8.0),
-                                                3.0 * pulse as f32,
-                                                status_color
-                                            );
-                                            ui.add_space(12.0);
-                                            ui.label(
-                                                egui::RichText::new(status_text)
-                                                    .size(10.0)
-                                                    .strong()
-                                                    .color(status_color)
-                                            );
-                                        });
-                                    });
-                            });
-                        });
+                // Simple header
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("DcD Live").heading());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let status_text = if self.conf.enabled { "ENABLED" } else { "DISABLED" };
+                        ui.label(status_text);
                     });
+                });
 
                 ui.add_space(12.0);
 
-                // Ultra-modern tab bar with floating design
-                egui::Frame::none()
-                    .fill(egui::Color32::from_rgba_premultiplied(20, 25, 35, 180))
-                    .rounding(egui::Rounding::same(16.0))
-                    .inner_margin(egui::Margin::same(8.0))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 15)))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-
-                            for (stage, label, icon) in [
-                                (Stage::Clickpack, "Clickpack", "🎵"),
-                                (Stage::Audio, "Audio", "🔊"),
-                                (Stage::Options, "Options", "⚙️"),
-                            ] {
-                                let selected = self.conf.stage == stage;
-
-                                // Modern floating tab with gradient and glow
-                                let (bg_color, text_color, glow_color) = if selected {
-                                    (
-                                        egui::Color32::from_rgb(100, 150, 255),
-                                        egui::Color32::WHITE,
-                                        egui::Color32::from_rgba_premultiplied(100, 150, 255, 40)
-                                    )
-                                } else {
-                                    (
-                                        egui::Color32::TRANSPARENT,
-                                        egui::Color32::from_gray(200),
-                                        egui::Color32::TRANSPARENT
-                                    )
-                                };
-
-                                let tab_size = egui::Vec2::new(110.0, 40.0);
-                                let (tab_rect, response) = ui.allocate_exact_size(tab_size, egui::Sense::click());
-
-                                if response.clicked() {
-                                    self.conf.stage = stage;
-                                }
-
-                                // Glow effect for selected tab
-                                if selected {
-                                    ui.painter().rect_filled(
-                                        tab_rect.expand(3.0),
-                                        egui::Rounding::same(14.0),
-                                        glow_color
-                                    );
-                                }
-
-                                // Tab background with hover effect
-                                let hover_alpha = if response.hovered() && !selected { 30 } else { 0 };
-                                let final_bg = if selected {
-                                    bg_color
-                                } else {
-                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, hover_alpha)
-                                };
-
-                                ui.painter().rect_filled(
-                                    tab_rect,
-                                    egui::Rounding::same(12.0),
-                                    final_bg
-                                );
-
-                                // Modern border for selected tab
-                                if selected {
-                                    ui.painter().rect_stroke(
-                                        tab_rect,
-                                        egui::Rounding::same(12.0),
-                                        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 40))
-                                    );
-                                }
-
-                                // Tab text with better positioning
-                                let final_text_color = if response.hovered() && !selected {
-                                    egui::Color32::WHITE
-                                } else {
-                                    text_color
-                                };
-
-                                ui.painter().text(
-                                    tab_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    format!("{} {}", icon, label),
-                                    egui::FontId::proportional(13.0),
-                                    final_text_color,
-                                );
-                            }
-                        });
-                    });
-
-                ui.add_space(8.0);
-
-                // Modern separator with gradient
-                let separator_rect = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), 1.0), egui::Sense::hover()).0;
-                ui.painter().rect_filled(
-                    separator_rect,
-                    egui::Rounding::ZERO,
-                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 10)
-                );
+                // Simple tab navigation
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.conf.stage, Stage::Clickpack, "Clickpack");
+                    ui.selectable_value(&mut self.conf.stage, Stage::Audio, "Audio");
+                    ui.selectable_value(&mut self.conf.stage, Stage::Options, "Options");
+                });
+                ui.separator();
 
                 ui.add_space(16.0);
 
-                // Modern content area with glassmorphism scrolling
+                // Simple content area
                 egui::ScrollArea::both()
-                    .auto_shrink([false, false])
                     .show(ui, |ui| {
                         match self.conf.stage {
                             Stage::Clickpack => self.show_clickpack_window(ui, modal.clone()),
                             Stage::Audio => {
-                                // Ultra-modern main toggle with glassmorphism and animations
-                                egui::Frame::none()
-                                    .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
-                                    .rounding(egui::Rounding::same(16.0))
-                                    .inner_margin(egui::Margin::same(20.0))
-                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            // Ultra-modern toggle switch with smooth animations and glow
-                                            let toggle_size = egui::Vec2::new(64.0, 32.0);
-                                            let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+                                // Simple main toggle
+                                if ui.checkbox(&mut self.conf.enabled, "Enable DcD Live").clicked() {
+                                    self.open_clickbot_toggle_toast();
+                                    self.play_noise();
+                                }
 
-                                            if response.clicked() {
-                                                self.conf.enabled = !self.conf.enabled;
-                                                self.open_clickbot_toggle_toast();
-                                                self.play_noise();
-                                            }
 
-                                            // Ultra-modern toggle with glassmorphism and smooth animations
-                                            let rounding = egui::Rounding::same(16.0);
-                                            let time = ui.input(|i| i.time);
-
-                                            let (bg_color, glow_color) = if self.conf.enabled {
-                                                (
-                                                    egui::Color32::from_rgb(16, 185, 129),
-                                                    egui::Color32::from_rgba_premultiplied(16, 185, 129, 80)
-                                                )
-                                            } else {
-                                                (
-                                                    egui::Color32::from_rgba_premultiplied(75, 85, 99, 180),
-                                                    egui::Color32::TRANSPARENT
-                                                )
-                                            };
-
-                                            // Animated glow effect
-                                            if self.conf.enabled {
-                                                let pulse = (time * 2.0).sin() * 0.2 + 0.8;
-                                                ui.painter().rect_filled(
-                                                    rect.expand(4.0 * pulse as f32),
-                                                    rounding,
-                                                    glow_color
-                                                );
-                                            }
-
-                                            // Modern glassmorphism background
-                                            ui.painter().rect_filled(
-                                                rect,
-                                                rounding,
-                                                bg_color
-                                            );
-
-                                            // Subtle border
-                                            ui.painter().rect_stroke(
-                                                rect,
-                                                rounding,
-                                                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 30))
-                                            );
-
-                                            // Ultra-modern floating knob with smooth animation
-                                            let knob_size = 26.0;
-                                            let knob_margin = 3.0;
-                                            let knob_travel = rect.width() - knob_size - (knob_margin * 2.0);
-
-                                            // Smooth animation progress (you could store this in bot state for real animation)
-                                            let progress = if self.conf.enabled { 1.0 } else { 0.0 };
-                                            let knob_x = rect.left() + knob_margin + (knob_travel * progress);
-                                            let knob_center = egui::Pos2::new(knob_x + knob_size/2.0, rect.center().y);
-
-                                            // Knob glow effect
-                                            if self.conf.enabled {
-                                                ui.painter().circle_filled(
-                                                    knob_center,
-                                                    knob_size/2.0 + 3.0,
-                                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)
-                                                );
-                                            }
-
-                                            // Modern knob with gradient
-                                            ui.painter().circle_filled(
-                                                knob_center,
-                                                knob_size/2.0,
-                                                egui::Color32::WHITE
-                                            );
-
-                                            // Knob highlight
-                                            ui.painter().circle_filled(
-                                                knob_center - egui::Vec2::new(2.0, 2.0),
-                                                knob_size/4.0,
-                                                egui::Color32::from_rgba_premultiplied(255, 255, 255, 60)
-                                            );
-
-                                            ui.add_space(20.0);
-                                            ui.vertical(|ui| {
-                                                ui.label(
-                                                    egui::RichText::new(if self.conf.enabled { "🎵 Clickbot Active" } else { "⏸️ Clickbot Inactive" })
-                                                        .size(20.0)
-                                                        .strong()
-                                                        .color(if self.conf.enabled { egui::Color32::from_rgb(16, 185, 129) } else { egui::Color32::from_gray(180) })
-                                                );
-                                                ui.label(
-                                                    egui::RichText::new(if self.conf.enabled {
-                                                        "Real-time audio feedback is running"
-                                                    } else {
-                                                        "Click the toggle to enable audio feedback"
-                                                    })
-                                                        .size(13.0)
-                                                        .color(egui::Color32::from_gray(160))
-                                                );
-                                            });
-                                        });
-                                    });
 
                                 ui.add_space(16.0);
                                 ui.add_enabled_ui(self.conf.enabled, |ui| {
@@ -2687,11 +2404,216 @@ impl Bot {
     }
 
     fn show_audio_window(&mut self, ui: &mut egui::Ui) {
-        // Ultra-modern Noise Settings with glassmorphism
-        egui::Frame::none()
-            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
-            .rounding(egui::Rounding::same(16.0))
-            .inner_margin(egui::Margin::same(20.0))
+        // Simple Noise Settings
+        ui.group(|ui| {
+            ui.label("Noise Settings");
+            ui.add_enabled_ui(
+                self.clickpack.has_noise() && !self.is_loading_clickpack(),
+                |ui| {
+                    if ui.checkbox(&mut self.conf.play_noise, "Play noise").clicked() {
+                        self.play_noise();
+                        self.open_noise_toggle_toast();
+                    }
+                    ui.add_enabled_ui(self.conf.play_noise, |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.noise_volume, 0.0..=1.0)
+                                .text("Volume")
+                                .step_by(0.01),
+                        );
+                    });
+                },
+            );
+        });
+
+        ui.separator();
+
+        // Simple Audio Device Settings
+        ui.group(|ui| {
+            ui.label("Audio Device");
+            let devices = self.devices.lock();
+            egui::ComboBox::from_label("Select Device")
+                .selected_text(&self.env.selected_device)
+                .show_ui(ui, |ui| {
+                    for device in devices.iter() {
+                        ui.selectable_value(&mut self.env.selected_device, device.clone(), device);
+                    }
+                });
+        });
+
+        ui.separator();
+
+        // Simple Timing Settings
+        ui.group(|ui| {
+            ui.label("Timing Settings");
+
+            ui.checkbox(&mut self.conf.use_ingame_time, "Use in-game time");
+
+            // Timing Mode
+            egui::ComboBox::from_label("Timing Mode")
+                .selected_text(self.conf.timing_mode.text())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.conf.timing_mode, TimingMode::Responsive, "Responsive");
+                    ui.selectable_value(&mut self.conf.timing_mode, TimingMode::Synchronized, "Synchronized");
+                    ui.selectable_value(&mut self.conf.timing_mode, TimingMode::Hybrid, "Hybrid");
+                });
+
+            ui.checkbox(&mut self.conf.instant_audio_response, "Instant Audio Response");
+
+            ui.add(
+                egui::Slider::new(&mut self.conf.input_latency_compensation, -0.1..=0.1)
+                    .text("Input Latency Compensation")
+                    .step_by(0.001)
+                    .suffix("s"),
+            );
+        });
+
+        ui.separator();
+
+        // Enhanced Recording Sync (Simple)
+        ui.group(|ui| {
+            ui.label("Enhanced Recording Sync");
+            ui.add_enabled_ui(self.conf.use_ingame_time, |ui| {
+                ui.checkbox(&mut self.conf.enhanced_recording_sync, "Enable Enhanced Recording Sync");
+
+                if self.conf.enhanced_recording_sync {
+                    ui.add(
+                        egui::Slider::new(&mut self.conf.time_smoothing_factor, 0.0..=1.0)
+                            .text("Time Smoothing")
+                            .step_by(0.01),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut self.conf.pause_detection_threshold, 0.01..=1.0)
+                            .text("Pause Detection Threshold")
+                            .step_by(0.01)
+                            .suffix("s"),
+                    );
+                }
+            });
+        });
+
+        ui.separator();
+
+        // FPS-Based Sync (Simple)
+        ui.group(|ui| {
+            ui.label("FPS-Based Sync");
+            ui.checkbox(&mut self.conf.fps_sync_enabled, "Enable FPS Sync");
+
+            if self.conf.fps_sync_enabled {
+                ui.add(
+                    egui::Slider::new(&mut self.conf.target_fps, 30.0..=240.0)
+                        .text("Target FPS")
+                        .step_by(1.0)
+                        .suffix(" FPS"),
+                );
+                ui.label(format!("Current FPS: {:.1}", self.current_fps));
+
+                ui.add(
+                    egui::Slider::new(&mut self.conf.fps_compensation_factor, 0.0..=2.0)
+                        .text("Compensation Factor")
+                        .step_by(0.1),
+                );
+
+                ui.checkbox(&mut self.conf.frame_time_smoothing, "Frame Time Smoothing");
+                ui.checkbox(&mut self.conf.advanced_sync_features, "Advanced Sync Features");
+            }
+        });
+
+        ui.separator();
+
+        // Audio Pause Mode
+        ui.group(|ui| {
+            ui.label("Audio Pause Mode");
+            ui.checkbox(&mut self.conf.allow_audio_finish_on_pause, "Allow Audio Finish on Pause");
+        });
+
+        ui.separator();
+
+        // Configuration Management
+        ui.group(|ui| {
+            ui.label("Configuration");
+            ui.horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    self.conf.save();
+                    self.toasts.lock().add(Toast::success("Configuration saved"));
+                }
+                if ui.button("Load").clicked() {
+                    if let Ok(conf) = Config::load() {
+                        self.conf = conf.fixup();
+                        self.toasts.lock().add(Toast::success("Configuration loaded"));
+                    }
+                }
+                if ui.button("Reset").clicked() {
+                    self.conf = Config::default().fixup();
+                    self.toasts.lock().add(Toast::success("Configuration reset to defaults"));
+                }
+            });
+        });
+    }
+
+    fn show_options_window_continued(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Pitch variation", |ui| {
+            ui.label(
+                "Pitch variation can make clicks sound more realistic by \
+                    changing their pitch randomly.",
+            );
+            ui.checkbox(&mut self.conf.pitch_enabled, "Enable pitch variation");
+            ui.add_enabled_ui(self.conf.pitch_enabled, |ui| {
+                let p = &mut self.conf.pitch;
+                drag_value(
+                    ui,
+                    &mut p.from,
+                    "Minimum pitch",
+                    0.0..=p.to,
+                    "Minimum pitch value, 1.0 means no change",
+                );
+                drag_value(
+                    ui,
+                    &mut p.to,
+                    "Maximum pitch",
+                    p.from..=f64::INFINITY,
+                    "Maximum pitch value, 1.0 means no change",
+                );
+            });
+        });
+
+        ui.collapsing("Volume settings", |ui| {
+            help_text(
+                ui,
+                "Cut overlapping click sounds,\n\
+                changes the sound significantly in spams",
+                |ui| ui.checkbox(&mut self.conf.cut_sounds, "Cut sounds"),
+            );
+            if self.conf.cut_sounds {
+                help_text(ui, "Allow clicks to be cut by releases", |ui| {
+                    ui.checkbox(&mut self.conf.cut_by_releases, "Cut by releases")
+                });
+            }
+            let vol = &mut self.conf.volume_settings;
+            drag_value(
+                ui,
+                &mut vol.global_volume,
+                "Global volume",
+                0.0..=f64::INFINITY,
+                "Constant volume multiplier for all sounds",
+            );
+            drag_value(
+                ui,
+                &mut vol.volume_var,
+                "Volume variation",
+                0.0..=f64::INFINITY,
+                "Random volume variation (+/-)",
+            );
+            drag_value(
+                ui,
+                &mut vol.platformer_volume_factor,
+                "Platformer volume factor",
+                f64::NEG_INFINITY..=f64::INFINITY,
+                "Multiplier of the platformer sound volume. If this is 0.5, \
+                platformer sounds will be played at half volume",
+            );
+        });
+
+        ui.collapsing("Spam volume changes", |ui| {
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -3221,6 +3143,355 @@ impl Bot {
             }
         });
 
+        ui.add_space(16.0);
+
+        // FPS-Based Sync Controls
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_premultiplied(25, 40, 35, 160))
+            .rounding(egui::Rounding::same(12.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(34, 197, 94, 30)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("📊").size(18.0));
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("FPS-Based Sync").size(16.0).strong().color(egui::Color32::WHITE));
+                });
+                ui.add_space(12.0);
+
+                // FPS Sync Enable toggle
+                ui.horizontal(|ui| {
+                    let toggle_size = egui::Vec2::new(44.0, 24.0);
+                    let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                    if response.clicked() {
+                        self.conf.fps_sync_enabled = !self.conf.fps_sync_enabled;
+                    }
+
+                    // Enhanced toggle background with FPS theme
+                    let rounding = egui::Rounding::same(12.0);
+                    let bg_color = if self.conf.fps_sync_enabled {
+                        egui::Color32::from_rgb(34, 197, 94)
+                    } else {
+                        egui::Color32::from_gray(60)
+                    };
+
+                    ui.painter().rect_filled(rect, rounding, bg_color);
+
+                    // Toggle knob with glow effect
+                    let knob_radius = 9.0;
+                    let knob_x = if self.conf.fps_sync_enabled {
+                        rect.right() - knob_radius - 3.0
+                    } else {
+                        rect.left() + knob_radius + 3.0
+                    };
+                    let knob_center = egui::Pos2::new(knob_x, rect.center().y);
+
+                    // Glow effect
+                    if self.conf.fps_sync_enabled {
+                        ui.painter().circle_filled(knob_center, knob_radius + 2.0, egui::Color32::from_rgba_premultiplied(34, 197, 94, 40));
+                    }
+
+                    // Main knob
+                    ui.painter().circle_filled(knob_center, knob_radius, egui::Color32::WHITE);
+
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("FPS Sync")
+                                .size(14.0)
+                                .strong()
+                                .color(if self.conf.fps_sync_enabled { egui::Color32::WHITE } else { egui::Color32::from_gray(160) })
+                        );
+                        ui.label(
+                            egui::RichText::new("Sync audio timing with frame rate")
+                                .size(10.0)
+                                .color(egui::Color32::from_gray(140))
+                        );
+                    });
+                });
+
+                if self.conf.fps_sync_enabled {
+                    ui.add_space(12.0);
+
+                    // FPS sync controls in a sub-frame
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_gray(16))
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(egui::Margin::same(14.0))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(35)))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("🎯").size(16.0));
+                                ui.add_space(6.0);
+                                ui.label(egui::RichText::new("FPS Sync Settings").size(14.0).strong().color(egui::Color32::WHITE));
+                            });
+                            ui.add_space(12.0);
+
+                            // Target FPS control
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_gray(20))
+                                .rounding(egui::Rounding::same(6.0))
+                                .inner_margin(egui::Margin::same(10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(egui::RichText::new("Target FPS").size(12.0).strong());
+                                            ui.label(egui::RichText::new(format!("Current: {:.1}", self.current_fps)).size(10.0).color(egui::Color32::from_gray(140)));
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.add(
+                                                egui::Slider::new(&mut self.conf.target_fps, 30.0..=240.0)
+                                                    .step_by(1.0)
+                                                    .show_value(true)
+                                                    .suffix(" FPS")
+                                            );
+                                        });
+                                    });
+                                });
+
+                            ui.add_space(8.0);
+
+                            // FPS Compensation Factor control
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_gray(20))
+                                .rounding(egui::Rounding::same(6.0))
+                                .inner_margin(egui::Margin::same(10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(egui::RichText::new("Compensation Factor").size(12.0).strong());
+                                            ui.label(egui::RichText::new("Strength of FPS compensation").size(10.0).color(egui::Color32::from_gray(140)));
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.add(
+                                                egui::Slider::new(&mut self.conf.fps_compensation_factor, 0.0..=2.0)
+                                                    .step_by(0.1)
+                                                    .show_value(true)
+                                            );
+                                        });
+                                    });
+                                });
+
+                            ui.add_space(8.0);
+
+                            // Advanced FPS features
+                            ui.horizontal(|ui| {
+                                // Frame Time Smoothing toggle
+                                let toggle_size = egui::Vec2::new(32.0, 18.0);
+                                let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                                if response.clicked() {
+                                    self.conf.frame_time_smoothing = !self.conf.frame_time_smoothing;
+                                }
+
+                                let bg_color = if self.conf.frame_time_smoothing {
+                                    egui::Color32::from_rgb(34, 197, 94)
+                                } else {
+                                    egui::Color32::from_gray(50)
+                                };
+
+                                ui.painter().rect_filled(rect, egui::Rounding::same(9.0), bg_color);
+
+                                let knob_radius = 6.0;
+                                let knob_x = if self.conf.frame_time_smoothing {
+                                    rect.right() - knob_radius - 2.0
+                                } else {
+                                    rect.left() + knob_radius + 2.0
+                                };
+                                let knob_center = egui::Pos2::new(knob_x, rect.center().y);
+                                ui.painter().circle_filled(knob_center, knob_radius, egui::Color32::WHITE);
+
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new("Frame Time Smoothing").size(12.0));
+
+                                ui.add_space(16.0);
+
+                                // Advanced Sync Features toggle
+                                let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                                if response.clicked() {
+                                    self.conf.advanced_sync_features = !self.conf.advanced_sync_features;
+                                }
+
+                                let bg_color = if self.conf.advanced_sync_features {
+                                    egui::Color32::from_rgb(147, 51, 234)
+                                } else {
+                                    egui::Color32::from_gray(50)
+                                };
+
+                                ui.painter().rect_filled(rect, egui::Rounding::same(9.0), bg_color);
+
+                                let knob_x = if self.conf.advanced_sync_features {
+                                    rect.right() - knob_radius - 2.0
+                                } else {
+                                    rect.left() + knob_radius + 2.0
+                                };
+                                let knob_center = egui::Pos2::new(knob_x, rect.center().y);
+                                ui.painter().circle_filled(knob_center, knob_radius, egui::Color32::WHITE);
+
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new("Advanced Sync").size(12.0));
+                            });
+                        });
+                }
+            });
+
+        ui.add_space(16.0);
+
+        // Enhanced Audio Pause Mode Controls
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_premultiplied(30, 35, 45, 160))
+            .rounding(egui::Rounding::same(12.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 15)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("⏸️").size(18.0));
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Audio Pause Mode").size(16.0).strong().color(egui::Color32::WHITE));
+                });
+                ui.add_space(12.0);
+
+                // Allow Audio Finish on Pause toggle
+                ui.horizontal(|ui| {
+                    let toggle_size = egui::Vec2::new(44.0, 24.0);
+                    let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                    if response.clicked() {
+                        self.conf.allow_audio_finish_on_pause = !self.conf.allow_audio_finish_on_pause;
+                    }
+
+                    // Modern toggle with glow
+                    let rounding = egui::Rounding::same(12.0);
+                    let (bg_color, glow_color) = if self.conf.allow_audio_finish_on_pause {
+                        (egui::Color32::from_rgb(16, 185, 129), egui::Color32::from_rgba_premultiplied(16, 185, 129, 40))
+                    } else {
+                        (egui::Color32::from_rgba_premultiplied(75, 85, 99, 180), egui::Color32::TRANSPARENT)
+                    };
+
+                    if self.conf.allow_audio_finish_on_pause {
+                        ui.painter().rect_filled(rect.expand(2.0), rounding, glow_color);
+                    }
+
+                    ui.painter().rect_filled(rect, rounding, bg_color);
+
+                    // Floating knob
+                    let knob_size = 18.0;
+                    let knob_margin = 3.0;
+                    let knob_travel = rect.width() - knob_size - (knob_margin * 2.0);
+                    let progress = if self.conf.allow_audio_finish_on_pause { 1.0 } else { 0.0 };
+                    let knob_x = rect.left() + knob_margin + (knob_travel * progress);
+                    let knob_center = egui::Pos2::new(knob_x + knob_size/2.0, rect.center().y);
+
+                    ui.painter().circle_filled(knob_center, knob_size/2.0, egui::Color32::WHITE);
+
+                    ui.add_space(16.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Allow Audio Finish on Pause")
+                                .size(14.0)
+                                .strong()
+                                .color(if self.conf.allow_audio_finish_on_pause { egui::Color32::from_rgb(16, 185, 129) } else { egui::Color32::from_gray(180) })
+                        );
+                        ui.label(
+                            egui::RichText::new(if self.conf.allow_audio_finish_on_pause { "Sounds continue during pause" } else { "Sounds stop immediately on pause" })
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(160))
+                        );
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                // Audio System Recovery toggle
+                ui.horizontal(|ui| {
+                    let toggle_size = egui::Vec2::new(44.0, 24.0);
+                    let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                    if response.clicked() {
+                        self.conf.enable_audio_system_recovery = !self.conf.enable_audio_system_recovery;
+                    }
+
+                    // Modern toggle with glow
+                    let rounding = egui::Rounding::same(12.0);
+                    let (bg_color, glow_color) = if self.conf.enable_audio_system_recovery {
+                        (egui::Color32::from_rgb(59, 130, 246), egui::Color32::from_rgba_premultiplied(59, 130, 246, 40))
+                    } else {
+                        (egui::Color32::from_rgba_premultiplied(75, 85, 99, 180), egui::Color32::TRANSPARENT)
+                    };
+
+                    if self.conf.enable_audio_system_recovery {
+                        ui.painter().rect_filled(rect.expand(2.0), rounding, glow_color);
+                    }
+
+                    ui.painter().rect_filled(rect, rounding, bg_color);
+
+                    // Floating knob
+                    let knob_size = 18.0;
+                    let knob_margin = 3.0;
+                    let knob_travel = rect.width() - knob_size - (knob_margin * 2.0);
+                    let progress = if self.conf.enable_audio_system_recovery { 1.0 } else { 0.0 };
+                    let knob_x = rect.left() + knob_margin + (knob_travel * progress);
+                    let knob_center = egui::Pos2::new(knob_x + knob_size/2.0, rect.center().y);
+
+                    ui.painter().circle_filled(knob_center, knob_size/2.0, egui::Color32::WHITE);
+
+                    ui.add_space(16.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Audio System Recovery")
+                                .size(14.0)
+                                .strong()
+                                .color(if self.conf.enable_audio_system_recovery { egui::Color32::from_rgb(59, 130, 246) } else { egui::Color32::from_gray(180) })
+                        );
+                        ui.label(
+                            egui::RichText::new(if self.conf.enable_audio_system_recovery { "Automatic recovery from audio issues" } else { "Basic audio handling" })
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(160))
+                        );
+                    });
+                });
+
+                // Pause debounce settings (when audio system recovery is enabled)
+                if self.conf.enable_audio_system_recovery {
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.label(egui::RichText::new("Advanced Pause Settings").size(13.0).strong().color(egui::Color32::WHITE));
+                    ui.add_space(8.0);
+
+                    // Pause debounce threshold
+                    ui.horizontal(|ui| {
+                        ui.label("Pause Debounce:");
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.pause_debounce_threshold, 0.01..=1.0)
+                                .step_by(0.01)
+                                .show_value(true)
+                                .suffix("s")
+                        );
+                    });
+
+                    ui.add_space(4.0);
+
+                    // Rapid pause threshold
+                    ui.horizontal(|ui| {
+                        ui.label("Rapid Pause Limit:");
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.rapid_pause_threshold, 1..=20)
+                                .show_value(true)
+                                .suffix(" cycles")
+                        );
+                    });
+                }
+            });
+
+        ui.add_space(16.0);
+
+        // Enhanced Audio Preferences Section
+        self.show_enhanced_audio_preferences(ui);
+
         // Add dual timing controls
         // self.show_dual_timing_controls(ui);
 
@@ -3229,6 +3500,157 @@ impl Bot {
 
         // Add additional audio controls
         // self.show_additional_audio_controls(ui);
+    }
+
+    fn show_enhanced_audio_preferences(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(20.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Modern icon with glow effect
+                    let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::hover()).0;
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        14.0,
+                        egui::Color32::from_rgba_premultiplied(236, 72, 153, 40)
+                    );
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "🎛️",
+                        egui::FontId::proportional(16.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Audio Preferences").size(18.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Advanced audio customization options").size(12.0).color(egui::Color32::from_gray(180)));
+                    });
+                });
+
+                ui.add_space(16.0);
+
+                // Enhanced Volume Controls
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Volume Controls").size(15.0).strong().color(egui::Color32::WHITE));
+                    ui.add_space(8.0);
+
+                    // Global Volume with modern slider
+                    ui.horizontal(|ui| {
+                        ui.label("Global Volume:");
+                        ui.add_space(8.0);
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.volume_settings.global_volume, 0.0..=2.0)
+                                .step_by(0.01)
+                                .show_value(true)
+                                .suffix("×")
+                        );
+                    });
+
+                    ui.add_space(6.0);
+
+                    // Volume Variation
+                    ui.horizontal(|ui| {
+                        ui.label("Volume Variation:");
+                        ui.add_space(8.0);
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.volume_settings.volume_var, 0.0..=1.0)
+                                .step_by(0.01)
+                                .show_value(true)
+                                .suffix("±")
+                        );
+                    });
+
+                    ui.add_space(6.0);
+
+                    // Platformer Volume Factor
+                    ui.horizontal(|ui| {
+                        ui.label("Platformer Volume:");
+                        ui.add_space(8.0);
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.volume_settings.platformer_volume_factor, 0.0..=2.0)
+                                .step_by(0.01)
+                                .show_value(true)
+                                .suffix("×")
+                        );
+                    });
+                });
+
+                ui.add_space(16.0);
+
+                // Enhanced Audio Behavior Options
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Audio Behavior").size(15.0).strong().color(egui::Color32::WHITE));
+                    ui.add_space(8.0);
+
+                    // Instant Audio Response toggle
+                    ui.horizontal(|ui| {
+                        let toggle_size = egui::Vec2::new(44.0, 24.0);
+                        let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
+
+                        if response.clicked() {
+                            self.conf.instant_audio_response = !self.conf.instant_audio_response;
+                        }
+
+                        // Modern toggle
+                        let rounding = egui::Rounding::same(12.0);
+                        let (bg_color, glow_color) = if self.conf.instant_audio_response {
+                            (egui::Color32::from_rgb(236, 72, 153), egui::Color32::from_rgba_premultiplied(236, 72, 153, 40))
+                        } else {
+                            (egui::Color32::from_rgba_premultiplied(75, 85, 99, 180), egui::Color32::TRANSPARENT)
+                        };
+
+                        if self.conf.instant_audio_response {
+                            ui.painter().rect_filled(rect.expand(2.0), rounding, glow_color);
+                        }
+
+                        ui.painter().rect_filled(rect, rounding, bg_color);
+
+                        // Floating knob
+                        let knob_size = 18.0;
+                        let knob_margin = 3.0;
+                        let knob_travel = rect.width() - knob_size - (knob_margin * 2.0);
+                        let progress = if self.conf.instant_audio_response { 1.0 } else { 0.0 };
+                        let knob_x = rect.left() + knob_margin + (knob_travel * progress);
+                        let knob_center = egui::Pos2::new(knob_x + knob_size/2.0, rect.center().y);
+
+                        ui.painter().circle_filled(knob_center, knob_size/2.0, egui::Color32::WHITE);
+
+                        ui.add_space(16.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new("Instant Audio Response")
+                                    .size(14.0)
+                                    .strong()
+                                    .color(if self.conf.instant_audio_response { egui::Color32::from_rgb(236, 72, 153) } else { egui::Color32::from_gray(180) })
+                            );
+                            ui.label(
+                                egui::RichText::new(if self.conf.instant_audio_response { "Zero-latency audio feedback" } else { "Standard audio timing" })
+                                    .size(11.0)
+                                    .color(egui::Color32::from_gray(160))
+                            );
+                        });
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Input Latency Compensation
+                    ui.horizontal(|ui| {
+                        ui.label("Input Latency Compensation:");
+                        ui.add_space(8.0);
+                        ui.add(
+                            egui::Slider::new(&mut self.conf.input_latency_compensation, -0.1..=0.1)
+                                .step_by(0.001)
+                                .show_value(true)
+                                .suffix("s")
+                        );
+                    });
+                });
+            });
     }
 
     /*fn show_additional_audio_controls(&mut self, ui: &mut egui::Ui) {

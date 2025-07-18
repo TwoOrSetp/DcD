@@ -153,7 +153,7 @@ unsafe extern "C" fn DcD_on_wgl_swap_buffers(hdc: HDC) {
 #[cfg(not(feature = "geode"))]
 fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
     unsafe {
-        if hdc == HDC(0) {
+        if hdc == HDC(std::ptr::null_mut()) {
             return h_wglSwapBuffers.call(hdc);
         }
         DcD_on_wgl_swap_buffers(hdc);
