@@ -1,23 +1,26 @@
-# DcD
-This is where she makes a mod.
+# ZCB Live for Geode
 
-<img src="logo.png" width="150" alt="the mod's logo" />
+ZCB Live is a next-generation Geometry Dash clickbot.
 
-*Update logo.png to change your mod's icon (please)*
+# Features
 
-## Getting started
-We recommend heading over to [the getting started section on our docs](https://docs.geode-sdk.org/getting-started/) for useful info on what to do next.
+- Easy to use
+- Platformer mode support
+- ClickpackDB integration: download clickpacks ingame
+- Pitch variation, volume changes, adjustable timings
+- Works with any bot
+- Realistic click sound algorithm
+- Configurable keybinds
 
-## Build instructions
-For more info, see [our docs](https://docs.geode-sdk.org/getting-started/create-mod#build)
-```sh
-# Assuming you have the Geode CLI set up already
-geode build
-```
+# ClickpackDB
 
-# Resources
-* [Geode SDK Documentation](https://docs.geode-sdk.org/)
-* [Geode SDK Source Code](https://github.com/geode-sdk/geode/)
-* [Geode CLI](https://github.com/geode-sdk/cli)
-* [Bindings](https://github.com/geode-sdk/bindings/)
-* [Dev Tools](https://github.com/geode-sdk/DevTools)
+A regularly updated collection of 300+ clickpacks available ingame.
+
+- `Clickpack` > `ClickpackDB` > `Open ClickpackDB...`
+
+# Discord community
+
+Join the Discord server for support, clickpacks, video sharing, ...
+
+- https://discord.gg/clickbot
+- https://discord.gg/BRVVVzxESu
