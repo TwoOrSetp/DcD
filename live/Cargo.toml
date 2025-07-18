@@ -1,12 +1,12 @@
 [package]
-name = "DcD"
-version = "0.1.42"
+name = "DcDLive"
+version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 
 [lib]
-crate-type = ["staticlib"] # `cdylib` for DLL, `staticlib` for Geode
 path = "Modules/lib.rs"
+crate-type = ["staticlib"] # `cdylib` for DLL, `staticlib` for Geode
 
 [profile.release]
 lto = "fat"
@@ -32,15 +32,6 @@ rfd = "0.15.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simple_logger = "5.0.0"
-fastrand = "2.2.0"
-# git = "https://github.com/zeozeozeo/egui_clickpack_db.git"
-egui_clickpack_db = { git = "https://github.com/zeozeozeo/egui_clickpack_db.git", features = ["live"] }
-ureq = "2.10.1"
-egui-notify = "0.14.0"
-parking_lot = "0.12.2"
-# gfmod = { path = "gfmod" }
-
-[target.'cfg(windows)'.dependencies]
 windows = { version = "0.58.0", features = ["Win32_System_Threading",
                                             "Win32_Foundation",
                                             "Win32_Security",
@@ -51,6 +42,13 @@ windows = { version = "0.58.0", features = ["Win32_System_Threading",
                                             "Win32_System_Diagnostics",
                                             "Win32_System_Memory",
                                             "Win32_System_Diagnostics_Debug"] }
+fastrand = "2.2.0"
+# git = "https://github.com/zeozeozeo/egui_clickpack_db.git"
+egui_clickpack_db = { git = "https://github.com/zeozeozeo/egui_clickpack_db.git", features = ["live"] }
+ureq = "2.10.1"
+egui-notify = "0.14.0"
+parking_lot = "0.12.2"
+# gfmod = { path = "gfmod" }
 
 [build-dependencies]
 built = "0.7.5"

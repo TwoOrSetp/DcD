@@ -661,10 +661,10 @@ impl Bot {
     #[inline]
     fn time(&self) -> f64 {
         #[cfg(feature = "geode")]
-        if self.playlayer_time != 0.0 && self.conf.use_ingame_time {
-            self.playlayer_time
+        if self.event_handler.playlayer_time != 0.0 && self.conf.use_ingame_time {
+            self.event_handler.playlayer_time
         } else {
-            self.level_start.elapsed().as_secs_f64()
+            self.event_handler.level_start.elapsed().as_secs_f64()
         }
         #[cfg(not(feature = "geode"))]
         if !self.playlayer.is_null() && self.conf.use_ingame_time {

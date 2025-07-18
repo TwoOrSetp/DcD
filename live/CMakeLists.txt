@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
-project(DcD_rust)
+project(zcblive_rust)
 
 # Location of the Rust library
 set(RUSTLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Name of the Rust library (not ${PROJECT_NAME})
-set(RUSTLIB_NAME DcD)
+set(RUSTLIB_NAME zcblive)
 
 # Path to the Rust library
 set(RUSTLIB_PATH ${RUSTLIB_DIR}/target/release/${RUSTLIB_NAME}.lib)
