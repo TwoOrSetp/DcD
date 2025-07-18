@@ -32,19 +32,19 @@ using namespace geode::prelude;
 #pragma comment(lib, "kernel32.lib")
 
 extern "C" {
-void zcblive_on_wgl_swap_buffers(HDC hdc);
-void zcblive_initialize();
-void zcblive_uninitialize();
-void zcblive_on_action(uint8_t button, bool player2, bool push);
-void zcblive_on_reset();
-void zcblive_set_is_in_level(bool is_in_level);
-void zcblive_set_playlayer_time(double time);
-void zcblive_on_init(PlayLayer* playlayer);
-void zcblive_on_quit();
-void zcblive_on_death();
-bool zcblive_do_force_player2_sounds();
-bool zcblive_do_use_alternate_hook();
-void zcblive_on_update(float dt);
+void DcD_on_wgl_swap_buffers(HDC hdc);
+void DcD_initialize();
+void DcD_uninitialize();
+void DcD_on_action(uint8_t button, bool player2, bool push);
+void DcD_on_reset();
+void DcD_set_is_in_level(bool is_in_level);
+void DcD_set_playlayer_time(double time);
+void DcD_on_init(PlayLayer* playlayer);
+void DcD_on_quit();
+void DcD_on_death();
+bool DcD_do_force_player2_sounds();
+bool DcD_do_use_alternate_hook();
+void DcD_on_update(float dt);
 }
 
 class GlHook {
@@ -68,17 +68,17 @@ class $modify(CCEGLView) {
         static GlHook glHook = GlHook();
         glHook.setup(this);
 
-        zcblive_on_wgl_swap_buffers(glHook.m_deviceContext);
+        DcD_on_wgl_swap_buffers(glHook.m_deviceContext);
         CCEGLView::swapBuffers();
     }
 };
 
 void onUnload() {
-    zcblive_uninitialize();
+    DcD_uninitialize();
 }
 
 $on_mod(Loaded) {
-    zcblive_initialize();
+    DcD_initialize();
     std::atexit(onUnload);
 }
 
@@ -92,10 +92,10 @@ inline double getTime() {
 }
 
 void handleAction(int button, bool player1, bool push, PlayLayer* playLayer) {
-    zcblive_on_action(static_cast<uint8_t>(button),
+    DcD_on_action(static_cast<uint8_t>(button),
                       !player1 && playLayer &&
                           (playLayer->m_levelSettings->m_twoPlayerMode ||
-                           zcblive_do_force_player2_sounds()),
+                           DcD_do_force_player2_sounds()),
                       push);
 }
 
@@ -103,29 +103,29 @@ class $modify(PlayerObject) {
 	void handlePushOrRelease(PlayerButton button, bool push) {
 		auto playLayer = PlayLayer::get();
 		if (playLayer == nullptr && LevelEditorLayer::get() == nullptr) {
-			zcblive_set_is_in_level(false);
+			DcD_set_is_in_level(false);
 			return;
 		}
 		if ((button == PlayerButton::Left || button == PlayerButton::Right) && !this->m_isPlatformer) {
 			return;
 		}
 
-		zcblive_set_is_in_level(true);
-		zcblive_set_playlayer_time(getTime());
+		DcD_set_is_in_level(true);
+		DcD_set_playlayer_time(getTime());
 
 		bool player1 = playLayer && this == playLayer->m_player1;
 		handleAction(static_cast<int>(button), player1, push, playLayer);
 	}
 
 	bool pushButton(PlayerButton button) {
-		if (zcblive_do_use_alternate_hook()) {
+		if (DcD_do_use_alternate_hook()) {
 			handlePushOrRelease(button, true);
 		}
 		return PlayerObject::pushButton(button);
 	}
 
 	bool releaseButton(PlayerButton button) {
-		if (zcblive_do_use_alternate_hook()) {
+		if (DcD_do_use_alternate_hook()) {
 			handlePushOrRelease(button, false);
 		}
 		return PlayerObject::releaseButton(button);
@@ -134,12 +134,12 @@ class $modify(PlayerObject) {
 
 class $modify(GJBaseGameLayer) {
 	void handleButton(bool push, int button, bool player1) {
-		if (zcblive_do_use_alternate_hook()) {
+		if (DcD_do_use_alternate_hook()) {
 			GJBaseGameLayer::handleButton(push, button, player1);
 			return;
 		}
-		zcblive_set_is_in_level(true);
-		zcblive_set_playlayer_time(getTime());
+		DcD_set_is_in_level(true);
+		DcD_set_playlayer_time(getTime());
 
 		auto playLayer = PlayLayer::get();
 		bool is_invalid = playLayer && ((button == 2 || button == 3)
@@ -153,9 +153,9 @@ class $modify(GJBaseGameLayer) {
 	}
 
 	void update(float dt) {
-		zcblive_on_update(dt);
+		DcD_on_update(dt);
 		GJBaseGameLayer::update(dt);
-		zcblive_set_playlayer_time(getTime());
+		DcD_set_playlayer_time(getTime());
 	}
 
 	bool init() {
@@ -165,26 +165,26 @@ class $modify(GJBaseGameLayer) {
 
 class $modify(PlayLayer) {
 	void onQuit() {
-		zcblive_on_quit();
+		DcD_on_quit();
 		PlayLayer::onQuit();
 	}
 
 	void resetLevel() {
-		zcblive_on_reset();
+		DcD_on_reset();
 		PlayLayer::resetLevel();
 	}
 
 	void destroyPlayer(PlayerObject* player, GameObject* hit) {
 		PlayLayer::destroyPlayer(player, hit);
 		if (player->m_isDead) {
-			zcblive_on_death();
+			DcD_on_death();
 		}
 	}
 };
 
 class $modify(LevelEditorLayer) {
 	bool init(GJGameLevel* level, bool something) {
-		zcblive_on_init(nullptr);
+		DcD_on_init(nullptr);
 		return LevelEditorLayer::init(level, something);
 	}
 };

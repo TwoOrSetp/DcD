@@ -1,5 +1,5 @@
 [package]
-name = "zcblive"
+name = "DcD"
 version = "0.2.6"
 edition = "2021"
 build = "build.rs"

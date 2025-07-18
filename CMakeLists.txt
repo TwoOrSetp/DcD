@@ -14,22 +14,22 @@ else()
     set(GEODE_TARGET_PLATFORM "Android64")
 endif()
 
-project(zcblive VERSION 1.0.0)
+project(DcD VERSION 1.0.0)
 
 add_library(${PROJECT_NAME} SHARED src/main.cpp)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/live)
-add_library(zcblive_rust STATIC IMPORTED)
+add_library(DcD_rust STATIC IMPORTED)
 
 # Set the correct library file name based on platform
 if(WIN32)
-    set(RUST_LIB_NAME "zcblive.lib")
+    set(RUST_LIB_NAME "DcD.lib")
 else()
-    set(RUST_LIB_NAME "libzcblive.a")
+    set(RUST_LIB_NAME "libDcD.a")
 endif()
 
-set_target_properties(zcblive_rust PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/live/target/release/${RUST_LIB_NAME})
-target_link_libraries(${PROJECT_NAME} zcblive_rust)
+set_target_properties(DcD_rust PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/live/target/release/${RUST_LIB_NAME})
+target_link_libraries(${PROJECT_NAME} DcD_rust)
 
 if (NOT DEFINED ENV{GEODE_SDK})
     message(FATAL_ERROR "Unable to find Geode SDK! Please define GEODE_SDK environment variable to point to Geode")
