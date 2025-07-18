@@ -5,14 +5,14 @@
 		"win": "2.2074",
 		"mac": "2.2074"
 	},
-	"version": "v1.0.3",
-	"id": "TwoOrSetp.DcD",
+	"version": "v1.0.4",
+	"id": "twoorsetp.dcd",
 	"name": "DcD",
-	"developer": "zeozeozeo",
-	"description": "A next-generation Geometry Dash clickbot",
+	"developer": "zeozeozeo, twoorsetp",
+	"description": "Probably Best Clickbot",
 	"issues": {
-		"info": "Report any bugs/suggestions in the Discord server.",
-		"url": "https://discord.gg/BRVVVzxESu"
+		"info": "Report any bugs/suggestions in the Discord server.!This Recode By twoorsetp orginial its zeozeozeo",
+		"url": "https://discord.gg/upYJtBuDJt"
 	},
 	"tags": [
 		"music", "utility", "cheat"
