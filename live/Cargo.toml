@@ -6,6 +6,7 @@ build = "build.rs"
 
 [lib]
 crate-type = ["staticlib"] # `cdylib` for DLL, `staticlib` for Geode
+path = "Modules/lib.rs"
 
 [profile.release]
 lto = "fat"
