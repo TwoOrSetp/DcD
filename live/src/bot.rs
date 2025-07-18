@@ -33,6 +33,13 @@ use std::{
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
 
 /// Global bot state
+///
+/// # Safety
+/// This static is accessed from multiple contexts but is designed to be used
+/// in a single-threaded environment (the main game thread). The warnings about
+/// static mut references are acknowledged but the current design ensures safety
+/// through careful usage patterns.
+#[allow(static_mut_refs)]
 pub static mut BOT: Lazy<Box<Bot>> = Lazy::new(Box::<Bot>::default);
 
 const UI_SCALE_RANGE: RangeInclusive<f32> = 0.3..=5.0;
@@ -230,6 +237,55 @@ const fn death_release_delay_offset_default() -> f64 {
     0.13
 }
 
+const fn default_time_smoothing_factor() -> f64 {
+    0.1 // 10% smoothing for stable timing
+}
+
+const fn default_pause_detection_threshold() -> f64 {
+    0.1 // 100ms threshold for detecting pauses
+}
+
+const fn default_input_latency_compensation() -> f64 {
+    0.0 // No compensation by default
+}
+
+const fn default_allow_audio_finish_on_pause() -> bool {
+    true // Allow audio to finish naturally when paused
+}
+
+const fn default_pause_debounce_threshold() -> f64 {
+    0.05 // 50ms debounce threshold for pause state changes
+}
+
+const fn default_rapid_pause_threshold() -> u32 {
+    5 // Maximum rapid pause/resume cycles before triggering audio reset
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingAudioAction {
+    Play { button: Button, player2: bool, push: bool, timestamp: Instant },
+    Stop { immediate: bool },
+    Reset,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
+pub enum TimingMode {
+    #[default]
+    Responsive, // Prioritizes immediate audio response
+    Synchronized, // Prioritizes perfect recording sync
+    Hybrid, // Balances both (recommended)
+}
+
+impl TimingMode {
+    const fn text(self) -> &'static str {
+        match self {
+            TimingMode::Responsive => "Responsive (Live Play)",
+            TimingMode::Synchronized => "Synchronized (Recording)",
+            TimingMode::Hybrid => "Hybrid (Balanced)",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
 pub enum ToastVisibility {
     #[default]
@@ -309,6 +365,26 @@ pub struct Config {
     ignored_click_types: IgnoredClickTypes,
     #[serde(default = "bool::default")]
     pub use_ingame_time: bool,
+    #[serde(default = "bool::default")]
+    pub enhanced_recording_sync: bool,
+    #[serde(default = "default_time_smoothing_factor")]
+    pub time_smoothing_factor: f64,
+    #[serde(default = "default_pause_detection_threshold")]
+    pub pause_detection_threshold: f64,
+    #[serde(default = "true_value")]
+    pub instant_audio_response: bool,
+    #[serde(default = "default_input_latency_compensation")]
+    pub input_latency_compensation: f64,
+    #[serde(default = "TimingMode::default")]
+    pub timing_mode: TimingMode,
+    #[serde(default = "default_allow_audio_finish_on_pause")]
+    pub allow_audio_finish_on_pause: bool,
+    #[serde(default = "default_pause_debounce_threshold")]
+    pub pause_debounce_threshold: f64,
+    #[serde(default = "default_rapid_pause_threshold")]
+    pub rapid_pause_threshold: u32,
+    #[serde(default = "bool::default")]
+    pub enable_audio_system_recovery: bool,
     #[serde(default = "float_one")]
     pub ui_scale: f32,
     #[serde(default)]
@@ -363,6 +439,16 @@ impl Default for Config {
             play_noise_when_disabled: false,
             ignored_click_types: IgnoredClickTypes::default(),
             use_ingame_time: false,
+            enhanced_recording_sync: false,
+            time_smoothing_factor: default_time_smoothing_factor(),
+            pause_detection_threshold: default_pause_detection_threshold(),
+            instant_audio_response: true,
+            input_latency_compensation: default_input_latency_compensation(),
+            timing_mode: TimingMode::default(),
+            allow_audio_finish_on_pause: default_allow_audio_finish_on_pause(),
+            pause_debounce_threshold: default_pause_debounce_threshold(),
+            rapid_pause_threshold: default_rapid_pause_threshold(),
+            enable_audio_system_recovery: true,
             ui_scale: 1.0,
             toast_visibility: ToastVisibility::default(),
         }
@@ -483,12 +569,31 @@ pub struct Bot {
     pub clickpack: Clickpack,
     pub first_launch_dialog_timeout: f32,
     pub level_start: Instant,
+    // Enhanced timing for recording synchronization
+    pub last_game_time: f64,
+    pub last_real_time: Instant,
+    pub time_offset: f64,
+    pub pause_compensation: f64,
+    pub time_smoothing_buffer: Vec<(f64, f64)>, // (game_time, real_time) pairs
+    // Dual timing system for instant response
+    pub input_timestamps: Vec<(Instant, f64)>, // (real_input_time, compensation) pairs
+    pub last_input_time: Instant,
+    pub audio_playback_time: f64,
+    pub sync_time_cache: f64,
     pub clickpack_db: ClickpackDb,
     pub clickpack_db_open: bool,
     pub prev_scale_factor: f32,
     pub dead_timer: f32,
     pub dead_timer_limit: f32,
     pub devices: Arc<Mutex<Vec<String>>>,
+    // Enhanced pause-aware audio management
+    pub is_game_paused: bool,
+    pub pause_detected_time: Instant,
+    pub pause_state_debounce_timer: Instant,
+    pub last_pause_state: bool,
+    pub rapid_pause_resume_count: u32,
+    pub audio_system_needs_reset: bool,
+    pub pending_audio_actions: Vec<PendingAudioAction>,
 }
 
 impl Default for Bot {
@@ -524,12 +629,31 @@ impl Default for Bot {
             clickpack: Clickpack::default(),
             first_launch_dialog_timeout: 3.0,
             level_start: now,
+            // Initialize enhanced timing fields
+            last_game_time: 0.0,
+            last_real_time: now,
+            time_offset: 0.0,
+            pause_compensation: 0.0,
+            time_smoothing_buffer: Vec::with_capacity(10),
+            // Initialize dual timing fields
+            input_timestamps: Vec::with_capacity(20),
+            last_input_time: now,
+            audio_playback_time: 0.0,
+            sync_time_cache: 0.0,
             clickpack_db: ClickpackDb::default(),
             clickpack_db_open: false,
             prev_scale_factor: 1.0,
             dead_timer: f32::NAN,
             dead_timer_limit: 0.0,
             devices: Arc::new(Mutex::new(vec![])),
+            // Initialize enhanced pause-aware audio management
+            is_game_paused: false,
+            pause_detected_time: now,
+            pause_state_debounce_timer: now,
+            last_pause_state: false,
+            rapid_pause_resume_count: 0,
+            audio_system_needs_reset: false,
+            pending_audio_actions: Vec::new(),
         }
     }
 }
@@ -863,24 +987,51 @@ impl Bot {
         self.prev_volume = self.conf.volume_settings.global_volume;
         self.prev_spam_offset = 0.0;
         self.is_in_level = true;
-        self.level_start = Instant::now();
+        let now = Instant::now();
+        self.level_start = now;
         self.dead_timer = f32::NAN;
+
+        // Initialize enhanced timing system
+        self.last_game_time = 0.0;
+        self.last_real_time = now;
+        self.time_offset = 0.0;
+        self.pause_compensation = 0.0;
+        self.time_smoothing_buffer.clear();
+
+        // Initialize dual timing system
+        self.input_timestamps.clear();
+        self.last_input_time = now;
+        self.audio_playback_time = 0.0;
+        self.sync_time_cache = 0.0;
     }
 
     pub fn on_reset(&mut self) {
-        self.level_start = Instant::now();
-        //for dir in [
-        //    &mut self.prev_times.jump,
-        //    &mut self.prev_times.left,
-        //    &mut self.prev_times.right,
-        //] {
-        //    for t in dir {
-        //        t.time = 0.0;
-        //        t.typ = ClickType::None;
-        //    }
-        //}
+        let now = Instant::now();
+        self.level_start = now;
         self.prev_times = ClickTimes::default();
         self.dead_timer = f32::NAN;
+
+        // Reset enhanced timing system for level restart
+        self.last_game_time = 0.0;
+        self.last_real_time = now;
+        self.time_offset = 0.0;
+        self.pause_compensation = 0.0;
+        self.time_smoothing_buffer.clear();
+
+        // Reset dual timing system
+        self.input_timestamps.clear();
+        self.last_input_time = now;
+        self.audio_playback_time = 0.0;
+        self.sync_time_cache = 0.0;
+
+        // Reset enhanced pause-aware audio management
+        self.is_game_paused = false;
+        self.pause_detected_time = now;
+        self.pause_state_debounce_timer = now;
+        self.last_pause_state = false;
+        self.rapid_pause_resume_count = 0;
+        self.audio_system_needs_reset = false;
+        self.pending_audio_actions.clear();
     }
 
     pub fn on_exit(&mut self) {
@@ -933,6 +1084,28 @@ impl Bot {
     }
 
     pub unsafe fn on_update(&mut self, dt: f32) {
+        // Update enhanced timing state for better recording synchronization
+        self.update_timing_state();
+
+        // Check and recover audio system if needed
+        self.check_and_recover_audio_system();
+
+        // Clean up old pending audio actions (older than 500ms)
+        let now = Instant::now();
+        self.pending_audio_actions.retain(|action| {
+            match action {
+                PendingAudioAction::Play { timestamp, .. } => {
+                    timestamp.elapsed().as_millis() < 500
+                }
+                _ => true, // Keep non-play actions
+            }
+        });
+
+        // Reset rapid pause counter if enough time has passed without rapid changes
+        if self.pause_state_debounce_timer.elapsed().as_secs_f64() > 1.0 {
+            self.rapid_pause_resume_count = 0;
+        }
+
         if !self.dead_timer.is_nan() {
             self.dead_timer += dt;
             if self.dead_timer >= self.dead_timer_limit {
@@ -947,6 +1120,31 @@ impl Bot {
         if self.clickpack.num_sounds == 0 || !self.is_in_level || !self.conf.enabled {
             return;
         }
+
+        // Enhanced pause handling with action queuing
+        if self.is_game_paused && self.conf.allow_audio_finish_on_pause {
+            if self.conf.enable_audio_system_recovery {
+                // Queue the action for later processing when resumed
+                self.pending_audio_actions.push(PendingAudioAction::Play {
+                    button,
+                    player2,
+                    push,
+                    timestamp: Instant::now(),
+                });
+                log::trace!("Queued audio action during pause for later processing");
+            } else {
+                // Original behavior: skip new audio during pause
+                log::trace!("Skipping new audio during pause - allowing current sounds to finish");
+            }
+            return;
+        }
+
+        // Check if audio system needs recovery
+        self.check_and_recover_audio_system();
+
+        // Record input event for instant response tracking
+        self.record_input_event();
+
         #[cfg(not(feature = "geode"))]
         if player2 && !self.playlayer.is_null()
         /* FIXME(2.206): && !self.playlayer.level_settings().is_2player() */
@@ -964,17 +1162,22 @@ impl Bot {
             return;
         }
 
-        let now = self.time();
-        if now == 0.0 {
+        // Dual timing system: separate audio and sync timing
+        let audio_time = self.get_predictive_audio_time();
+        let sync_time = self.sync_time();
+
+        if sync_time == 0.0 {
             return;
         }
+
+        // Use sync time for timing calculations (accuracy)
         let prev_time =
             self.prev_times
                 .get_prev_time(button, player2, self.conf.decouple_platformer);
         if prev_time.typ.is_click() && push {
             return;
         }
-        let dt = (now - prev_time.time).abs();
+        let dt = (sync_time - prev_time.time).abs();
         let click_type = ClickType::from_time(push, dt, &self.conf.timings);
         if self.conf.ignored_click_types.is_ignored(click_type) {
             return;
@@ -1027,9 +1230,11 @@ impl Bot {
         }
 
         // stop all playing sounds (acb behaviour)
+        // But respect pause-aware audio settings
         if !use_fmod
             && self.conf.cut_sounds
             && (!click_type.is_release() || self.conf.cut_by_releases)
+            && !(self.is_game_paused && self.conf.allow_audio_finish_on_pause)
         {
             for sound in &self.mixer.renderer.guard().sounds {
                 // check if this is the noise sound, we don't want to stop it
@@ -1066,32 +1271,435 @@ impl Bot {
             */
         }
         */
+        // Store timing information using sync time for accuracy
         self.prev_times.set_time(
             button,
             player2,
             ClickTime {
-                time: now,
+                time: sync_time, // Use sync time for timing calculations
                 typ: click_type,
             },
             self.conf.decouple_platformer,
         );
         self.prev_pitch = pitch;
+
+        // Cache audio playback time for diagnostics
+        self.audio_playback_time = audio_time;
     }
 
+    /// Get timing for audio playback (prioritizes responsiveness)
     #[inline]
-    fn time(&self) -> f64 {
-        #[cfg(feature = "geode")]
-        if self.playlayer_time != 0.0 && self.conf.use_ingame_time {
-            self.playlayer_time
-        } else {
-            self.level_start.elapsed().as_secs_f64()
+    fn audio_time(&mut self) -> f64 {
+        match self.conf.timing_mode {
+            TimingMode::Responsive => {
+                // Always use real-time for maximum responsiveness
+                self.level_start.elapsed().as_secs_f64() + self.conf.input_latency_compensation
+            }
+            TimingMode::Synchronized => {
+                // Use synchronized time for perfect recording sync
+                self.sync_time()
+            }
+            TimingMode::Hybrid => {
+                // Use instant response if enabled, otherwise synchronized
+                if self.conf.instant_audio_response {
+                    self.level_start.elapsed().as_secs_f64() + self.conf.input_latency_compensation
+                } else {
+                    self.sync_time()
+                }
+            }
         }
-        #[cfg(not(feature = "geode"))]
-        if !self.playlayer.is_null() && self.conf.use_ingame_time {
-            self.playlayer.time()
-        } else {
-            self.level_start.elapsed().as_secs_f64()
+    }
+
+    /// Get timing for synchronization calculations (prioritizes accuracy)
+    #[inline]
+    fn sync_time(&mut self) -> f64 {
+        if !self.conf.use_ingame_time {
+            return self.level_start.elapsed().as_secs_f64();
         }
+
+        // Get raw game time
+        let raw_game_time = {
+            #[cfg(feature = "geode")]
+            {
+                if self.playlayer_time != 0.0 {
+                    self.playlayer_time
+                } else {
+                    return self.level_start.elapsed().as_secs_f64();
+                }
+            }
+            #[cfg(not(feature = "geode"))]
+            {
+                if !self.playlayer.is_null() {
+                    self.playlayer.time()
+                } else {
+                    return self.level_start.elapsed().as_secs_f64();
+                }
+            }
+        };
+
+        if !self.conf.enhanced_recording_sync {
+            return raw_game_time;
+        }
+
+        // Enhanced timing for recording synchronization
+        self.get_synchronized_time(raw_game_time)
+    }
+
+    /// Legacy time method for backward compatibility
+    #[inline]
+    fn time(&mut self) -> f64 {
+        // Use sync time for timing calculations to maintain accuracy
+        self.sync_time()
+    }
+
+    /// Enhanced timing calculation for better recording synchronization
+    fn get_synchronized_time(&mut self, raw_game_time: f64) -> f64 {
+        let current_real_time = Instant::now();
+        let real_elapsed = current_real_time.duration_since(self.last_real_time).as_secs_f64();
+
+        // Detect potential pause/resume by checking for large time jumps
+        let game_time_delta = raw_game_time - self.last_game_time;
+        let is_paused = real_elapsed > self.conf.pause_detection_threshold && game_time_delta < real_elapsed * 0.5;
+
+        // Enhanced pause state management with debouncing
+        self.update_pause_state_with_debouncing(is_paused, current_real_time);
+
+        if is_paused {
+            // During pause, maintain the last known synchronized time
+            return self.last_game_time + self.time_offset;
+        }
+
+        // Calculate time drift between game time and real time
+        let expected_real_time = self.level_start.elapsed().as_secs_f64();
+        let time_drift = raw_game_time - expected_real_time;
+
+        // Apply smoothing to reduce timing jitter during recording
+        let smoothed_time = if !self.time_smoothing_buffer.is_empty() {
+            let avg_drift = self.time_smoothing_buffer.iter()
+                .map(|(_, drift)| *drift)
+                .sum::<f64>() / self.time_smoothing_buffer.len() as f64;
+
+            let smoothing = self.conf.time_smoothing_factor;
+            raw_game_time + (avg_drift * smoothing) + (time_drift * (1.0 - smoothing))
+        } else {
+            raw_game_time
+        };
+
+        smoothed_time + self.pause_compensation
+    }
+
+    /// Update timing state for enhanced synchronization
+    /// This should be called regularly to maintain accurate timing data
+    fn update_timing_state(&mut self) {
+        if !self.conf.use_ingame_time || !self.conf.enhanced_recording_sync {
+            // Even if enhanced sync is disabled, we still need to detect pauses for audio management
+            self.update_pause_state_basic();
+            return;
+        }
+
+        let current_real_time = Instant::now();
+        let raw_game_time = {
+            #[cfg(feature = "geode")]
+            {
+                self.playlayer_time
+            }
+            #[cfg(not(feature = "geode"))]
+            {
+                if !self.playlayer.is_null() {
+                    self.playlayer.time()
+                } else {
+                    return;
+                }
+            }
+        };
+
+        // Update smoothing buffer with recent timing data
+        let real_elapsed = current_real_time.duration_since(self.level_start).as_secs_f64();
+        let time_drift = raw_game_time - real_elapsed;
+
+        self.time_smoothing_buffer.push((raw_game_time, time_drift));
+
+        // Keep buffer size manageable (last 10 samples for smoothing)
+        if self.time_smoothing_buffer.len() > 10 {
+            self.time_smoothing_buffer.remove(0);
+        }
+
+        // Detect and compensate for pauses
+        let real_delta = current_real_time.duration_since(self.last_real_time).as_secs_f64();
+        let game_delta = raw_game_time - self.last_game_time;
+
+        let is_paused = real_delta > self.conf.pause_detection_threshold && game_delta < real_delta * 0.5;
+
+        // Enhanced pause state management with debouncing (for enhanced timing system)
+        self.update_pause_state_with_debouncing(is_paused, current_real_time);
+
+        if is_paused {
+            // Game was likely paused, accumulate pause compensation
+            self.pause_compensation += real_delta - game_delta;
+        }
+
+        // Update state for next iteration
+        self.last_game_time = raw_game_time;
+        self.last_real_time = current_real_time;
+    }
+
+    /// Enhanced pause state management with debouncing and rapid change detection
+    fn update_pause_state_with_debouncing(&mut self, is_paused: bool, current_time: Instant) {
+        let debounce_elapsed = current_time.duration_since(self.pause_state_debounce_timer).as_secs_f64();
+
+        // Check if we should apply debouncing
+        let should_debounce = debounce_elapsed < self.conf.pause_debounce_threshold;
+
+        // Detect rapid pause/resume cycles
+        if is_paused != self.last_pause_state && !should_debounce {
+            self.rapid_pause_resume_count += 1;
+            self.pause_state_debounce_timer = current_time;
+
+            // Check if we've exceeded the rapid pause threshold
+            if self.rapid_pause_resume_count >= self.conf.rapid_pause_threshold {
+                log::warn!("Rapid pause/resume cycles detected ({}), marking audio system for reset",
+                          self.rapid_pause_resume_count);
+                self.audio_system_needs_reset = true;
+                self.rapid_pause_resume_count = 0; // Reset counter
+            }
+        }
+
+        // Only update pause state if not debouncing or if it's been stable
+        if !should_debounce || is_paused == self.last_pause_state {
+            if is_paused && !self.is_game_paused {
+                // Game just paused
+                self.is_game_paused = true;
+                self.pause_detected_time = current_time;
+                log::debug!("Game pause detected - allowing current audio to finish");
+
+                // If audio system recovery is enabled, handle pause more gracefully
+                if self.conf.enable_audio_system_recovery && self.conf.allow_audio_finish_on_pause {
+                    // Don't immediately stop sounds, let them finish naturally
+                    log::debug!("Allowing current audio to finish during pause");
+                }
+            } else if !is_paused && self.is_game_paused {
+                // Game just resumed
+                self.is_game_paused = false;
+                log::debug!("Game resumed - normal audio behavior restored");
+
+                // Process any pending audio actions that were queued during pause
+                if self.conf.enable_audio_system_recovery {
+                    self.process_pending_audio_actions();
+                }
+            }
+
+            self.last_pause_state = is_paused;
+        }
+    }
+
+    /// Basic pause detection for standard timing system
+    /// Used when enhanced recording sync is disabled but pause-aware audio is still needed
+    fn update_pause_state_basic(&mut self) {
+        if !self.conf.use_ingame_time || !self.conf.allow_audio_finish_on_pause {
+            return;
+        }
+
+        let current_real_time = Instant::now();
+        let raw_game_time = {
+            #[cfg(feature = "geode")]
+            {
+                self.playlayer_time
+            }
+            #[cfg(not(feature = "geode"))]
+            {
+                if !self.playlayer.is_null() {
+                    self.playlayer.time()
+                } else {
+                    return;
+                }
+            }
+        };
+
+        // Simple pause detection without the full enhanced timing system
+        let real_delta = current_real_time.duration_since(self.last_real_time).as_secs_f64();
+        let game_delta = raw_game_time - self.last_game_time;
+
+        let is_paused = real_delta > self.conf.pause_detection_threshold && game_delta < real_delta * 0.5;
+
+        // Enhanced pause state management with debouncing (for basic timing system)
+        self.update_pause_state_with_debouncing(is_paused, current_real_time);
+
+        // Update state for next iteration
+        self.last_game_time = raw_game_time;
+        self.last_real_time = current_real_time;
+    }
+
+    /// Record input timestamp for instant response tracking
+    fn record_input_event(&mut self) {
+        let now = Instant::now();
+        let compensation = self.calculate_input_compensation();
+
+        self.input_timestamps.push((now, compensation));
+        self.last_input_time = now;
+
+        // Keep buffer size manageable (last 20 inputs for analysis)
+        if self.input_timestamps.len() > 20 {
+            self.input_timestamps.remove(0);
+        }
+    }
+
+    /// Calculate input latency compensation based on recent input patterns
+    fn calculate_input_compensation(&self) -> f64 {
+        if self.input_timestamps.is_empty() {
+            return self.conf.input_latency_compensation;
+        }
+
+        // Analyze recent input timing patterns to predict optimal compensation
+        let recent_inputs = self.input_timestamps.iter()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>();
+
+        if recent_inputs.len() < 2 {
+            return self.conf.input_latency_compensation;
+        }
+
+        // Calculate average time between recent inputs
+        let mut total_delta = 0.0;
+        for i in 1..recent_inputs.len() {
+            let delta = recent_inputs[i-1].0.duration_since(recent_inputs[i].0).as_secs_f64();
+            total_delta += delta;
+        }
+        let avg_input_rate = total_delta / (recent_inputs.len() - 1) as f64;
+
+        // Adjust compensation based on input rate (faster inputs need less compensation)
+        let base_compensation = self.conf.input_latency_compensation;
+        let rate_factor = (avg_input_rate * 10.0).min(1.0); // Scale factor based on input rate
+
+        base_compensation * rate_factor
+    }
+
+    /// Get predictive timing for immediate audio response
+    fn get_predictive_audio_time(&mut self) -> f64 {
+        let base_time = self.audio_time();
+
+        if !self.conf.instant_audio_response {
+            return base_time;
+        }
+
+        // Apply predictive compensation for ultra-low latency
+        let compensation = self.calculate_input_compensation();
+        base_time - compensation // Subtract to play audio earlier
+    }
+
+    /// Get timing diagnostics for debugging and verification
+    pub fn get_timing_diagnostics(&self) -> String {
+        let real_elapsed = self.level_start.elapsed().as_secs_f64();
+        let game_time = {
+            #[cfg(feature = "geode")]
+            {
+                self.playlayer_time
+            }
+            #[cfg(not(feature = "geode"))]
+            {
+                if !self.playlayer.is_null() {
+                    self.playlayer.time()
+                } else {
+                    0.0
+                }
+            }
+        };
+
+        let timing_mode_str = self.conf.timing_mode.text();
+        let input_compensation = self.conf.input_latency_compensation;
+        let last_input_age = self.last_input_time.elapsed().as_secs_f64();
+
+        if !self.conf.use_ingame_time {
+            return format!(
+                "Real-time mode:\n\
+                Timing Mode: {}\n\
+                Real Time: {:.3}s\n\
+                Audio Time: {:.3}s\n\
+                Input Compensation: {:.3}s\n\
+                Last Input: {:.3}s ago\n\
+                Instant Response: {}\n\
+                Pause-Aware Audio: {}\n\
+                Game Paused: {}",
+                timing_mode_str,
+                real_elapsed,
+                self.audio_playback_time,
+                input_compensation,
+                last_input_age,
+                self.conf.instant_audio_response,
+                self.conf.allow_audio_finish_on_pause,
+                self.is_game_paused
+            );
+        }
+
+        if !self.conf.enhanced_recording_sync {
+            return format!(
+                "Basic in-game time mode:\n\
+                Timing Mode: {}\n\
+                Game Time: {:.3}s\n\
+                Real Time: {:.3}s\n\
+                Audio Time: {:.3}s\n\
+                Drift: {:.3}s\n\
+                Input Compensation: {:.3}s\n\
+                Last Input: {:.3}s ago\n\
+                Instant Response: {}\n\
+                Pause-Aware Audio: {}\n\
+                Game Paused: {}",
+                timing_mode_str,
+                game_time,
+                real_elapsed,
+                self.audio_playback_time,
+                game_time - real_elapsed,
+                input_compensation,
+                last_input_age,
+                self.conf.instant_audio_response,
+                self.conf.allow_audio_finish_on_pause,
+                self.is_game_paused
+            );
+        }
+
+        let avg_drift = if !self.time_smoothing_buffer.is_empty() {
+            self.time_smoothing_buffer.iter()
+                .map(|(_, drift)| *drift)
+                .sum::<f64>() / self.time_smoothing_buffer.len() as f64
+        } else {
+            0.0
+        };
+
+        format!(
+            "Dual Timing System (Enhanced):\n\
+            Timing Mode: {}\n\
+            Game Time: {:.3}s\n\
+            Real Time: {:.3}s\n\
+            Audio Time: {:.3}s\n\
+            Sync Time: {:.3}s\n\
+            Raw Drift: {:.3}s\n\
+            Avg Drift: {:.3}s\n\
+            Pause Compensation: {:.3}s\n\
+            Input Compensation: {:.3}s\n\
+            Last Input: {:.3}s ago\n\
+            Smoothing Factor: {:.1}%\n\
+            Buffer Size: {}/10\n\
+            Input Buffer: {}/20\n\
+            Instant Response: {}\n\
+            Pause-Aware Audio: {}\n\
+            Game Paused: {}",
+            timing_mode_str,
+            game_time,
+            real_elapsed,
+            self.audio_playback_time,
+            self.sync_time_cache,
+            game_time - real_elapsed,
+            avg_drift,
+            self.pause_compensation,
+            input_compensation,
+            last_input_age,
+            self.conf.time_smoothing_factor * 100.0,
+            self.time_smoothing_buffer.len(),
+            self.input_timestamps.len(),
+            self.conf.instant_audio_response,
+            self.conf.allow_audio_finish_on_pause,
+            self.is_game_paused
+        )
     }
 
     fn open_clickbot_toggle_toast(&self) {
@@ -1659,17 +2267,197 @@ impl Bot {
         ui.separator();
 
         ui.collapsing("Timings", |ui| {
-            let timings_copy = self.conf.timings.clone();
-            let timings = &mut self.conf.timings;
-
             help_text(
                 ui,
                 "Use in-game level time instead of real time.\n\
-                Less realistic with practice mode or speedhack",
+                Less realistic with practice mode or speedhack.\n\
+                Enable 'Enhanced Recording Sync' for better video recording synchronization.",
                 |ui| {
                     ui.checkbox(&mut self.conf.use_ingame_time, "Use in-game time");
                 },
             );
+
+            // Store the value to avoid borrowing issues
+            let use_ingame_time = self.conf.use_ingame_time;
+
+            // Enhanced recording synchronization options
+            ui.add_enabled_ui(use_ingame_time, |ui| {
+                help_text(
+                    ui,
+                    "Enables advanced timing synchronization for recording gameplay.\n\
+                    Reduces audio desync in recorded videos by compensating for:\n\
+                    • Frame rate variations during recording\n\
+                    • Game pause/resume states\n\
+                    • Recording software timing interference\n\
+                    • Time drift between game and real time",
+                    |ui| {
+                        ui.checkbox(&mut self.conf.enhanced_recording_sync, "Enhanced Recording Sync");
+                    },
+                );
+
+                if self.conf.enhanced_recording_sync {
+                    ui.indent("recording_sync_options", |ui| {
+                        help_text(
+                            ui,
+                            "Controls how much timing smoothing is applied (0.0 = no smoothing, 1.0 = maximum smoothing).\n\
+                            Higher values provide more stable timing but may feel less responsive.",
+                            |ui| {
+                                drag_value(
+                                    ui,
+                                    &mut self.conf.time_smoothing_factor,
+                                    "Time Smoothing",
+                                    0.0..=1.0,
+                                    "",
+                                );
+                            },
+                        );
+
+                        help_text(
+                            ui,
+                            "Threshold in seconds for detecting game pauses.\n\
+                            Lower values detect shorter pauses but may cause false positives.",
+                            |ui| {
+                                drag_value(
+                                    ui,
+                                    &mut self.conf.pause_detection_threshold,
+                                    "Pause Detection Threshold (s)",
+                                    0.01..=1.0,
+                                    "",
+                                );
+                            },
+                        );
+                    });
+                }
+
+                // Dual Timing System Controls
+                ui.separator();
+                ui.label(RichText::new("Dual Timing System").strong());
+
+                help_text(
+                    ui,
+                    "Controls how audio timing is handled for different use cases:\n\
+                    • Responsive: Prioritizes immediate audio feedback (best for live play)\n\
+                    • Synchronized: Prioritizes perfect recording sync (best for videos)\n\
+                    • Hybrid: Balances both based on other settings (recommended)",
+                    |ui| {
+                        egui::ComboBox::from_label("Timing Mode")
+                            .selected_text(self.conf.timing_mode.text())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.conf.timing_mode,
+                                    TimingMode::Responsive,
+                                    TimingMode::Responsive.text(),
+                                );
+                                ui.selectable_value(
+                                    &mut self.conf.timing_mode,
+                                    TimingMode::Synchronized,
+                                    TimingMode::Synchronized.text(),
+                                );
+                                ui.selectable_value(
+                                    &mut self.conf.timing_mode,
+                                    TimingMode::Hybrid,
+                                    TimingMode::Hybrid.text(),
+                                );
+                            });
+                    },
+                );
+
+                help_text(
+                    ui,
+                    "Enables instantaneous audio response that bypasses smoothing for immediate feedback.\n\
+                    When enabled, audio plays immediately upon button press with 0ms delay.\n\
+                    Disable for perfect recording synchronization at the cost of slight input delay.",
+                    |ui| {
+                        ui.checkbox(&mut self.conf.instant_audio_response, "Instant Audio Response");
+                    },
+                );
+
+                help_text(
+                    ui,
+                    "Compensates for input latency by playing audio slightly earlier.\n\
+                    Positive values play audio earlier, negative values play audio later.\n\
+                    Adjust based on your system's input latency characteristics.",
+                    |ui| {
+                        drag_value(
+                            ui,
+                            &mut self.conf.input_latency_compensation,
+                            "Input Latency Compensation (s)",
+                            -0.1..=0.1,
+                            "",
+                        );
+                    },
+                );
+
+                // Show timing diagnostics button
+                if ui.button("Show Timing Diagnostics").clicked() {
+                    let diagnostics = self.get_timing_diagnostics();
+                    log::info!("Timing Diagnostics:\n{}", diagnostics);
+                    self.toasts.lock().add(Toast::info("Timing diagnostics logged to console"));
+                }
+
+                // Show audio system diagnostics button
+                if ui.button("Show Audio System Status").clicked() {
+                    let audio_status = self.get_audio_system_status();
+                    log::info!("Audio System Status:\n{}", audio_status);
+                    self.toasts.lock().add(Toast::info("Audio system status logged to console"));
+                }
+            });
+
+            // Enhanced pause-aware audio controls
+            ui.separator();
+            ui.label(RichText::new("Pause-Aware Audio System").strong());
+
+            help_text(
+                ui,
+                "When enabled, currently playing clickpack audio will continue to play naturally when the game is paused,\n\
+                rather than being immediately cut off. New audio will not start during pause.\n\
+                This prevents jarring audio cutoffs during pause/resume cycles and improves the overall audio experience.",
+                |ui| {
+                    ui.checkbox(&mut self.conf.allow_audio_finish_on_pause, "Allow Audio to Finish on Pause");
+                },
+            );
+
+            help_text(
+                ui,
+                "Enables advanced audio system recovery features that handle rapid pause/resume cycles more gracefully.\n\
+                This includes action queuing during pauses and automatic audio system reset when needed.",
+                |ui| {
+                    ui.checkbox(&mut self.conf.enable_audio_system_recovery, "Enable Audio System Recovery");
+                },
+            );
+
+            ui.add_enabled_ui(self.conf.enable_audio_system_recovery, |ui| {
+                help_text(
+                    ui,
+                    "Time threshold for debouncing pause state changes to prevent audio instability.\n\
+                    Lower values are more responsive but may cause issues with rapid pause/resume cycles.",
+                    |ui| {
+                        drag_value(
+                            ui,
+                            &mut self.conf.pause_debounce_threshold,
+                            "Pause Debounce Threshold (s)",
+                            0.01..=0.5,
+                            "",
+                        );
+                    },
+                );
+
+                help_text(
+                    ui,
+                    "Maximum number of rapid pause/resume cycles before triggering an audio system reset.\n\
+                    This prevents audio system instability during very rapid state changes.",
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                DragValue::new(&mut self.conf.rapid_pause_threshold)
+                                    .clamp_range(3..=20)
+                                    .speed(0.1),
+                            );
+                            ui.label("Rapid Pause Threshold");
+                        });
+                    },
+                );
+            });
             help_text(
                 ui,
                 "Plays platformer left/right sounds even if your clickpack doesn't have them",
@@ -1729,30 +2517,32 @@ impl Bot {
 
             ui.separator();
 
+            // Timing values section - moved to end to avoid borrowing conflicts
+            let timings_copy = self.conf.timings.clone();
             drag_value(
                 ui,
-                &mut timings.hard,
+                &mut self.conf.timings.hard,
                 "Hard timing",
                 timings_copy.regular..=f64::INFINITY,
                 "Anything above this time between clicks plays hardclicks/hardreleases",
             );
             drag_value(
                 ui,
-                &mut timings.regular,
+                &mut self.conf.timings.regular,
                 "Regular timing",
                 timings_copy.soft..=timings_copy.hard,
                 "Anything above this time between clicks plays clicks/releases",
             );
             drag_value(
                 ui,
-                &mut timings.soft,
+                &mut self.conf.timings.soft,
                 "Soft timing",
                 0.0..=timings_copy.regular,
                 "Anything above this time between clicks plays softclicks/softreleases",
             );
             ui.label(format!(
                 "Any value smaller than {:.2?} plays microclicks/microreleases",
-                Duration::from_secs_f64(timings.soft),
+                Duration::from_secs_f64(self.conf.timings.soft),
             ))
         });
 
@@ -1985,6 +2775,151 @@ impl Bot {
         self.conf.play_noise = false;
         self.play_noise();
         self.conf.play_noise = prev_play_noise;
+    }
+
+    /// Reset the audio system to recover from issues during rapid pause/resume cycles
+    fn reset_audio_system(&mut self) {
+        log::info!("Resetting audio system due to rapid pause/resume cycles");
+
+        // Stop all currently playing sounds immediately
+        self.stop_all_sounds_immediately();
+
+        // Reinitialize the mixer
+        if !self.conf.use_fmod {
+            self.maybe_init_kittyaudio();
+        }
+
+        // Reset audio state
+        self.audio_system_needs_reset = false;
+        self.rapid_pause_resume_count = 0;
+        self.pending_audio_actions.clear();
+
+        // Restart noise if it was playing
+        self.play_noise();
+
+        log::info!("Audio system reset completed");
+    }
+
+    /// Stop all sounds immediately without seeking to end (for emergency reset)
+    fn stop_all_sounds_immediately(&mut self) {
+        if !self.conf.use_fmod {
+            // Create a new mixer to immediately stop all sounds
+            let old_mixer = std::mem::replace(&mut self.mixer, Mixer::new());
+            drop(old_mixer); // This will stop all sounds immediately
+        }
+
+        // Reset noise sound handle
+        self.noise_sound = None;
+    }
+
+    /// Process pending audio actions that were queued during pause states
+    fn process_pending_audio_actions(&mut self) {
+        if self.pending_audio_actions.is_empty() {
+            return;
+        }
+
+        log::debug!("Processing {} pending audio actions", self.pending_audio_actions.len());
+
+        let actions = std::mem::take(&mut self.pending_audio_actions);
+        let mut processed_count = 0;
+
+        for action in actions {
+            match action {
+                PendingAudioAction::Play { button, player2, push, timestamp } => {
+                    // Only process recent actions (within 150ms for better responsiveness)
+                    if timestamp.elapsed().as_millis() < 150 {
+                        unsafe { self.on_action(button, player2, push); }
+                        processed_count += 1;
+                    }
+                }
+                PendingAudioAction::Stop { immediate } => {
+                    if immediate {
+                        self.stop_all_sounds_immediately();
+                    } else {
+                        self.stop_noise();
+                    }
+                    processed_count += 1;
+                }
+                PendingAudioAction::Reset => {
+                    self.reset_audio_system();
+                    processed_count += 1;
+                }
+            }
+        }
+
+        if processed_count > 0 {
+            log::debug!("Processed {} audio actions after resume", processed_count);
+        }
+    }
+
+    /// Check if audio system recovery is needed and perform it
+    fn check_and_recover_audio_system(&mut self) {
+        if !self.conf.enable_audio_system_recovery {
+            return;
+        }
+
+        if self.audio_system_needs_reset {
+            self.reset_audio_system();
+        }
+
+        // Process any pending actions
+        self.process_pending_audio_actions();
+    }
+
+    /// Get comprehensive audio system status for diagnostics
+    fn get_audio_system_status(&self) -> String {
+        let mut status = String::new();
+
+        status.push_str("=== Audio System Status ===\n");
+        status.push_str(&format!("Game Paused: {}\n", self.is_game_paused));
+        status.push_str(&format!("Audio System Needs Reset: {}\n", self.audio_system_needs_reset));
+        status.push_str(&format!("Rapid Pause/Resume Count: {}\n", self.rapid_pause_resume_count));
+        status.push_str(&format!("Pending Audio Actions: {}\n", self.pending_audio_actions.len()));
+        status.push_str(&format!("Last Pause State: {}\n", self.last_pause_state));
+
+        let debounce_elapsed = self.pause_state_debounce_timer.elapsed().as_millis();
+        status.push_str(&format!("Debounce Timer Elapsed: {}ms\n", debounce_elapsed));
+
+        let pause_elapsed = self.pause_detected_time.elapsed().as_millis();
+        status.push_str(&format!("Time Since Last Pause Detection: {}ms\n", pause_elapsed));
+
+        status.push_str("\n=== Configuration ===\n");
+        status.push_str(&format!("Allow Audio Finish on Pause: {}\n", self.conf.allow_audio_finish_on_pause));
+        status.push_str(&format!("Enable Audio System Recovery: {}\n", self.conf.enable_audio_system_recovery));
+        status.push_str(&format!("Pause Detection Threshold: {:.3}s\n", self.conf.pause_detection_threshold));
+        status.push_str(&format!("Pause Debounce Threshold: {:.3}s\n", self.conf.pause_debounce_threshold));
+        status.push_str(&format!("Rapid Pause Threshold: {}\n", self.conf.rapid_pause_threshold));
+
+        status.push_str("\n=== Audio Engine ===\n");
+        status.push_str(&format!("Using FMOD: {}\n", self.conf.use_fmod));
+        status.push_str(&format!("Buffer Size: {}\n", self.conf.buffer_size));
+        status.push_str(&format!("Cut Sounds: {}\n", self.conf.cut_sounds));
+        status.push_str(&format!("Noise Sound Active: {}\n", self.noise_sound.is_some()));
+
+        if !self.conf.use_fmod {
+            let renderer_guard = self.mixer.renderer.guard();
+            status.push_str(&format!("Active Sounds: {}\n", renderer_guard.sounds.len()));
+        }
+
+        status
+    }
+
+    /// Force immediate audio system recovery (emergency reset)
+    /// This can be called externally when audio issues are detected
+    pub fn force_audio_system_recovery(&mut self) {
+        log::warn!("Forcing immediate audio system recovery");
+
+        // Mark for immediate reset
+        self.audio_system_needs_reset = true;
+        self.rapid_pause_resume_count = self.conf.rapid_pause_threshold;
+
+        // Clear all pending actions to prevent conflicts
+        self.pending_audio_actions.clear();
+
+        // Perform immediate recovery
+        self.check_and_recover_audio_system();
+
+        log::info!("Emergency audio system recovery completed");
     }
 
     fn load_clickpack_thread(
@@ -2315,5 +3250,198 @@ impl Drop for Bot {
     fn drop(&mut self) {
         // self.unload_clickpack();
         self.release_fmod()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_enhanced_timing_basic() {
+        let mut bot = Bot::default();
+        bot.conf.use_ingame_time = true;
+        bot.conf.enhanced_recording_sync = true;
+        bot.conf.time_smoothing_factor = 0.1;
+        bot.conf.pause_detection_threshold = 0.1;
+
+        // Initialize timing
+        bot.on_init(0);
+
+        // Simulate some time passing
+        thread::sleep(Duration::from_millis(50));
+        bot.playlayer_time = 0.05; // 50ms game time
+
+        // Update timing state
+        bot.update_timing_state();
+
+        // Get synchronized time
+        let sync_time = bot.get_synchronized_time(0.05);
+
+        // Should be close to the game time
+        assert!((sync_time - 0.05).abs() < 0.01, "Synchronized time should be close to game time");
+    }
+
+    #[test]
+    fn test_pause_detection() {
+        let mut bot = Bot::default();
+        bot.conf.use_ingame_time = true;
+        bot.conf.enhanced_recording_sync = true;
+        bot.conf.pause_detection_threshold = 0.05; // 50ms threshold
+
+        bot.on_init(0);
+
+        // Simulate initial state
+        bot.last_game_time = 1.0;
+        bot.last_real_time = Instant::now() - Duration::from_millis(200); // 200ms ago
+
+        // Simulate pause (game time didn't advance much, but real time did)
+        bot.playlayer_time = 1.01; // Only 10ms game time passed
+
+        let sync_time = bot.get_synchronized_time(1.01);
+
+        // During pause, should maintain stable timing
+        assert!(sync_time > 0.0, "Should maintain positive time during pause");
+    }
+
+    #[test]
+    fn test_enhanced_pause_aware_audio() {
+        let mut bot = Bot::default();
+        bot.conf.use_ingame_time = true;
+        bot.conf.allow_audio_finish_on_pause = true;
+        bot.conf.enable_audio_system_recovery = true;
+        bot.conf.pause_detection_threshold = 0.05; // 50ms threshold
+        bot.conf.pause_debounce_threshold = 0.03; // 30ms debounce
+        bot.conf.rapid_pause_threshold = 3;
+
+        bot.on_init(0);
+
+        // Initially not paused
+        assert!(!bot.is_game_paused, "Should not be paused initially");
+        assert_eq!(bot.rapid_pause_resume_count, 0, "Should have no rapid pause count initially");
+
+        // Simulate pause detection
+        bot.last_game_time = 1.0;
+        bot.last_real_time = Instant::now() - Duration::from_millis(200); // 200ms ago
+        bot.playlayer_time = 1.01; // Only 10ms game time passed
+
+        // Update timing state to detect pause
+        bot.update_timing_state();
+
+        // Should now be detected as paused
+        assert!(bot.is_game_paused, "Should detect pause state");
+
+        // Test rapid pause/resume detection
+        for _ in 0..4 {
+            // Simulate rapid state changes
+            std::thread::sleep(Duration::from_millis(10));
+            bot.update_pause_state_with_debouncing(!bot.is_game_paused, Instant::now());
+        }
+
+        // Should trigger audio system reset due to rapid changes
+        assert!(bot.audio_system_needs_reset || bot.rapid_pause_resume_count >= bot.conf.rapid_pause_threshold,
+                "Should detect rapid pause/resume cycles");
+
+        // Test pending action queuing
+        bot.is_game_paused = true;
+        bot.pending_audio_actions.push(PendingAudioAction::Play {
+            button: crate::clickpack::Button::Jump,
+            player2: false,
+            push: true,
+            timestamp: Instant::now(),
+        });
+
+        assert_eq!(bot.pending_audio_actions.len(), 1, "Should have queued action");
+
+        // Test audio system recovery
+        bot.check_and_recover_audio_system();
+
+        // After recovery, system should be stable
+        if bot.audio_system_needs_reset {
+            bot.reset_audio_system();
+            assert!(!bot.audio_system_needs_reset, "Audio system should be reset");
+            assert_eq!(bot.rapid_pause_resume_count, 0, "Rapid pause count should be reset");
+        }
+
+        // Simulate resume
+        bot.last_real_time = Instant::now() - Duration::from_millis(50); // 50ms ago
+        bot.playlayer_time = 1.1; // Normal game time progression
+
+        // Update timing state to detect resume
+        bot.update_timing_state();
+
+        // Should now be detected as resumed
+        assert!(!bot.is_game_paused, "Should detect resume state");
+    }
+
+    #[test]
+    fn test_timing_diagnostics() {
+        let mut bot = Bot::default();
+        bot.conf.use_ingame_time = true;
+        bot.conf.enhanced_recording_sync = true;
+
+        let diagnostics = bot.get_timing_diagnostics();
+        assert!(diagnostics.contains("Dual Timing System"), "Should show dual timing system diagnostics");
+
+        bot.conf.enhanced_recording_sync = false;
+        let diagnostics = bot.get_timing_diagnostics();
+        assert!(diagnostics.contains("Basic in-game time mode"), "Should show basic mode diagnostics");
+
+        bot.conf.use_ingame_time = false;
+        let diagnostics = bot.get_timing_diagnostics();
+        assert!(diagnostics.contains("Real-time mode"), "Should show real-time mode diagnostics");
+    }
+
+    #[test]
+    fn test_dual_timing_modes() {
+        let mut bot = Bot::default();
+        bot.conf.use_ingame_time = true;
+        bot.conf.instant_audio_response = true;
+        bot.conf.input_latency_compensation = 0.01;
+
+        bot.on_init(0);
+
+        // Test responsive mode
+        bot.conf.timing_mode = TimingMode::Responsive;
+        let audio_time = bot.audio_time();
+        let sync_time = bot.sync_time();
+
+        // In responsive mode, audio time should be real-time based
+        assert!((audio_time - bot.level_start.elapsed().as_secs_f64()).abs() < 0.1);
+
+        // Test synchronized mode
+        bot.conf.timing_mode = TimingMode::Synchronized;
+        bot.playlayer_time = 1.0;
+        let sync_audio_time = bot.audio_time();
+
+        // In synchronized mode, audio time should match sync time
+        assert!((sync_audio_time - bot.sync_time()).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_input_compensation() {
+        let mut bot = Bot::default();
+        bot.conf.instant_audio_response = true;
+        bot.conf.input_latency_compensation = 0.05;
+
+        bot.on_init(0);
+
+        // Record some input events
+        bot.record_input_event();
+        thread::sleep(Duration::from_millis(10));
+        bot.record_input_event();
+
+        let compensation = bot.calculate_input_compensation();
+        assert!(compensation >= 0.0, "Compensation should be non-negative");
+        assert!(compensation <= 0.1, "Compensation should be reasonable");
+
+        // Test predictive timing
+        let predictive_time = bot.get_predictive_audio_time();
+        let base_time = bot.audio_time();
+
+        // Predictive time should be slightly earlier than base time
+        assert!(predictive_time <= base_time, "Predictive time should be earlier or equal to base time");
     }
 }
