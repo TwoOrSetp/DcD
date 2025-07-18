@@ -1994,52 +1994,85 @@ impl Bot {
             s.spacing.combo_width = 120.0;
         });
 
+        // Modern window with glassmorphism effect
         egui::Window::new("DcD Live")
             .title_bar(false)
             .resizable(true)
-            .min_width(450.0)
-            .default_width(520.0)
+            .min_width(480.0)
+            .default_width(580.0)
+            .frame(egui::Frame::window(&ctx.style()).fill(egui::Color32::from_rgba_premultiplied(15, 15, 20, 240)))
             .show(ctx, |ui| {
-                // Custom title bar with modern design
+                // Modern gradient header with glassmorphism
                 egui::Frame::none()
-                    .fill(egui::Color32::from_gray(24))
-                    .rounding(egui::Rounding { nw: 16.0, ne: 16.0, sw: 0.0, se: 0.0 })
-                    .inner_margin(egui::Margin::symmetric(20.0, 16.0))
+                    .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 200))
+                    .rounding(egui::Rounding { nw: 20.0, ne: 20.0, sw: 0.0, se: 0.0 })
+                    .inner_margin(egui::Margin::symmetric(24.0, 20.0))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            // App icon and title
-                            ui.label(egui::RichText::new("🎵").size(24.0));
-                            ui.add_space(8.0);
+                            // Modern app icon with glow effect
+                            let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::hover()).0;
+                            ui.painter().circle_filled(
+                                icon_rect.center(),
+                                16.0,
+                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 40)
+                            );
+                            ui.painter().text(
+                                icon_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "🎵",
+                                egui::FontId::proportional(20.0),
+                                egui::Color32::WHITE,
+                            );
+
+                            ui.add_space(16.0);
                             ui.vertical(|ui| {
+                                // Modern title with gradient text effect
                                 ui.label(
                                     egui::RichText::new("DcD Live")
-                                        .size(20.0)
+                                        .size(24.0)
                                         .strong()
                                         .color(egui::Color32::WHITE)
                                 );
                                 ui.label(
-                                    egui::RichText::new(format!("Version {}", built_info::PKG_VERSION))
+                                    egui::RichText::new(format!("Version {} • Next-Gen Audio Engine", built_info::PKG_VERSION))
                                         .size(11.0)
-                                        .color(egui::Color32::from_gray(160))
+                                        .color(egui::Color32::from_gray(180))
                                 );
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // Enhanced status indicator with modern badge design
-                                let (status_color, status_bg, status_text) = if self.conf.enabled {
-                                    (egui::Color32::WHITE, egui::Color32::from_rgb(34, 197, 94), "ACTIVE")
+                                // Ultra-modern status indicator with animated glow
+                                let (status_color, status_bg, status_text, glow_color) = if self.conf.enabled {
+                                    (egui::Color32::WHITE, egui::Color32::from_rgb(16, 185, 129), "ACTIVE", egui::Color32::from_rgba_premultiplied(16, 185, 129, 60))
                                 } else {
-                                    (egui::Color32::WHITE, egui::Color32::from_rgb(239, 68, 68), "INACTIVE")
+                                    (egui::Color32::WHITE, egui::Color32::from_rgb(239, 68, 68), "INACTIVE", egui::Color32::from_rgba_premultiplied(239, 68, 68, 60))
                                 };
+
+                                // Glow effect background
+                                let status_rect = ui.allocate_exact_size(egui::Vec2::new(90.0, 28.0), egui::Sense::hover()).0;
+                                ui.painter().rect_filled(
+                                    status_rect.expand(4.0),
+                                    egui::Rounding::same(16.0),
+                                    glow_color
+                                );
 
                                 egui::Frame::none()
                                     .fill(status_bg)
-                                    .rounding(egui::Rounding::same(12.0))
-                                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(egui::RichText::new("●").size(12.0).color(status_color));
-                                            ui.add_space(4.0);
+                                    .rounding(egui::Rounding::same(14.0))
+                                    .inner_margin(egui::Margin::symmetric(14.0, 7.0))
+                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 30)))
+                                    .show_ui_at(ui, status_rect, |ui| {
+                                        ui.horizontal_centered(|ui| {
+                                            // Animated pulse dot
+                                            let time = ui.input(|i| i.time);
+                                            let pulse = (time * 3.0).sin() * 0.3 + 0.7;
+                                            ui.painter().circle_filled(
+                                                ui.next_widget_position() + egui::Vec2::new(6.0, 8.0),
+                                                3.0 * pulse as f32,
+                                                status_color
+                                            );
+                                            ui.add_space(12.0);
                                             ui.label(
                                                 egui::RichText::new(status_text)
                                                     .size(10.0)
@@ -2052,16 +2085,17 @@ impl Bot {
                         });
                     });
 
-                ui.add_space(8.0);
+                ui.add_space(12.0);
 
-                // Enhanced tab bar with modern pill design
+                // Ultra-modern tab bar with floating design
                 egui::Frame::none()
-                    .fill(egui::Color32::from_gray(16))
-                    .rounding(egui::Rounding::same(12.0))
-                    .inner_margin(egui::Margin::same(6.0))
+                    .fill(egui::Color32::from_rgba_premultiplied(20, 25, 35, 180))
+                    .rounding(egui::Rounding::same(16.0))
+                    .inner_margin(egui::Margin::same(8.0))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 15)))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.spacing_mut().item_spacing.x = 6.0;
 
                             for (stage, label, icon) in [
                                 (Stage::Clickpack, "Clickpack", "🎵"),
@@ -2070,63 +2104,107 @@ impl Bot {
                             ] {
                                 let selected = self.conf.stage == stage;
 
-                                // Custom tab button with modern styling
-                                let (bg_color, text_color) = if selected {
-                                    (egui::Color32::from_rgb(100, 150, 255), egui::Color32::WHITE)
+                                // Modern floating tab with gradient and glow
+                                let (bg_color, text_color, glow_color) = if selected {
+                                    (
+                                        egui::Color32::from_rgb(100, 150, 255),
+                                        egui::Color32::WHITE,
+                                        egui::Color32::from_rgba_premultiplied(100, 150, 255, 40)
+                                    )
                                 } else {
-                                    (egui::Color32::TRANSPARENT, egui::Color32::from_gray(180))
+                                    (
+                                        egui::Color32::TRANSPARENT,
+                                        egui::Color32::from_gray(200),
+                                        egui::Color32::TRANSPARENT
+                                    )
                                 };
 
-                                let button_response = ui.add_sized(
-                                    [100.0, 36.0],
-                                    egui::Button::new("")
-                                        .fill(bg_color)
-                                        .rounding(egui::Rounding::same(8.0))
-                                );
+                                let tab_size = egui::Vec2::new(110.0, 40.0);
+                                let (tab_rect, response) = ui.allocate_exact_size(tab_size, egui::Sense::click());
 
-                                if button_response.clicked() {
+                                if response.clicked() {
                                     self.conf.stage = stage;
                                 }
 
-                                // Draw tab content manually for better control
-                                let button_rect = button_response.rect;
-                                let text_color = if button_response.hovered() && !selected {
+                                // Glow effect for selected tab
+                                if selected {
+                                    ui.painter().rect_filled(
+                                        tab_rect.expand(3.0),
+                                        egui::Rounding::same(14.0),
+                                        glow_color
+                                    );
+                                }
+
+                                // Tab background with hover effect
+                                let hover_alpha = if response.hovered() && !selected { 30 } else { 0 };
+                                let final_bg = if selected {
+                                    bg_color
+                                } else {
+                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, hover_alpha)
+                                };
+
+                                ui.painter().rect_filled(
+                                    tab_rect,
+                                    egui::Rounding::same(12.0),
+                                    final_bg
+                                );
+
+                                // Modern border for selected tab
+                                if selected {
+                                    ui.painter().rect_stroke(
+                                        tab_rect,
+                                        egui::Rounding::same(12.0),
+                                        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 40))
+                                    );
+                                }
+
+                                // Tab text with better positioning
+                                let final_text_color = if response.hovered() && !selected {
                                     egui::Color32::WHITE
                                 } else {
                                     text_color
                                 };
 
                                 ui.painter().text(
-                                    button_rect.center(),
+                                    tab_rect.center(),
                                     egui::Align2::CENTER_CENTER,
                                     format!("{} {}", icon, label),
                                     egui::FontId::proportional(13.0),
-                                    text_color,
+                                    final_text_color,
                                 );
                             }
                         });
                     });
 
-                ui.add_space(4.0);
-                ui.separator();
                 ui.add_space(8.0);
 
-                // Main content area with improved scrolling
+                // Modern separator with gradient
+                let separator_rect = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), 1.0), egui::Sense::hover()).0;
+                ui.painter().rect_filled(
+                    separator_rect,
+                    egui::Rounding::ZERO,
+                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 10)
+                );
+
+                ui.add_space(16.0);
+
+                // Modern content area with glassmorphism scrolling
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         match self.conf.stage {
                             Stage::Clickpack => self.show_clickpack_window(ui, modal.clone()),
                             Stage::Audio => {
-                                // Enhanced main toggle with modern card design
+                                // Ultra-modern main toggle with glassmorphism and animations
                                 egui::Frame::none()
-                                    .fill(egui::Color32::from_gray(24))
-                                    .rounding(egui::Rounding::same(12.0))
-                                    .inner_margin(egui::Margin::same(16.0))
+                                    .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+                                    .rounding(egui::Rounding::same(16.0))
+                                    .inner_margin(egui::Margin::same(20.0))
+                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            // Enhanced toggle switch with better animations
-                                            let toggle_size = egui::Vec2::new(52.0, 28.0);
+                                            // Ultra-modern toggle switch with smooth animations and glow
+                                            let toggle_size = egui::Vec2::new(64.0, 32.0);
                                             let (rect, response) = ui.allocate_exact_size(toggle_size, egui::Sense::click());
 
                                             if response.clicked() {
@@ -2135,56 +2213,95 @@ impl Bot {
                                                 self.play_noise();
                                             }
 
-                                            // Enhanced toggle background with gradient effect
-                                            let rounding = egui::Rounding::same(14.0);
-                                            let bg_color = if self.conf.enabled {
-                                                egui::Color32::from_rgb(34, 197, 94)
+                                            // Ultra-modern toggle with glassmorphism and smooth animations
+                                            let rounding = egui::Rounding::same(16.0);
+                                            let time = ui.input(|i| i.time);
+
+                                            let (bg_color, glow_color) = if self.conf.enabled {
+                                                (
+                                                    egui::Color32::from_rgb(16, 185, 129),
+                                                    egui::Color32::from_rgba_premultiplied(16, 185, 129, 80)
+                                                )
                                             } else {
-                                                egui::Color32::from_gray(60)
+                                                (
+                                                    egui::Color32::from_rgba_premultiplied(75, 85, 99, 180),
+                                                    egui::Color32::TRANSPARENT
+                                                )
                                             };
 
-                                            // Add subtle shadow for depth
-                                            let shadow_rect = rect.translate(egui::Vec2::new(0.0, 1.0));
-                                            ui.painter().rect_filled(shadow_rect, rounding, egui::Color32::from_black_alpha(30));
-                                            ui.painter().rect_filled(rect, rounding, bg_color);
+                                            // Animated glow effect
+                                            if self.conf.enabled {
+                                                let pulse = (time * 2.0).sin() * 0.2 + 0.8;
+                                                ui.painter().rect_filled(
+                                                    rect.expand(4.0 * pulse as f32),
+                                                    rounding,
+                                                    glow_color
+                                                );
+                                            }
 
-                                            // Enhanced toggle knob with better styling
-                                            let knob_size = 22.0;
-                                            let knob_margin = 3.0;
-                                            let knob_offset = if self.conf.enabled {
-                                                rect.right() - knob_size - knob_margin
-                                            } else {
-                                                rect.left() + knob_margin
-                                            };
-
-                                            let knob_center = egui::Pos2::new(knob_offset + knob_size/2.0, rect.center().y);
-
-                                            // Knob shadow
-                                            ui.painter().circle_filled(
-                                                knob_center + egui::Vec2::new(0.0, 1.0),
-                                                knob_size/2.0,
-                                                egui::Color32::from_black_alpha(40)
+                                            // Modern glassmorphism background
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                rounding,
+                                                bg_color
                                             );
 
-                                            // Knob
+                                            // Subtle border
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                rounding,
+                                                egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 30))
+                                            );
+
+                                            // Ultra-modern floating knob with smooth animation
+                                            let knob_size = 26.0;
+                                            let knob_margin = 3.0;
+                                            let knob_travel = rect.width() - knob_size - (knob_margin * 2.0);
+
+                                            // Smooth animation progress (you could store this in bot state for real animation)
+                                            let progress = if self.conf.enabled { 1.0 } else { 0.0 };
+                                            let knob_x = rect.left() + knob_margin + (knob_travel * progress);
+                                            let knob_center = egui::Pos2::new(knob_x + knob_size/2.0, rect.center().y);
+
+                                            // Knob glow effect
+                                            if self.conf.enabled {
+                                                ui.painter().circle_filled(
+                                                    knob_center,
+                                                    knob_size/2.0 + 3.0,
+                                                    egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)
+                                                );
+                                            }
+
+                                            // Modern knob with gradient
                                             ui.painter().circle_filled(
                                                 knob_center,
                                                 knob_size/2.0,
                                                 egui::Color32::WHITE
                                             );
 
-                                            ui.add_space(16.0);
+                                            // Knob highlight
+                                            ui.painter().circle_filled(
+                                                knob_center - egui::Vec2::new(2.0, 2.0),
+                                                knob_size/4.0,
+                                                egui::Color32::from_rgba_premultiplied(255, 255, 255, 60)
+                                            );
+
+                                            ui.add_space(20.0);
                                             ui.vertical(|ui| {
                                                 ui.label(
-                                                    egui::RichText::new(if self.conf.enabled { "Clickbot Enabled" } else { "Clickbot Disabled" })
-                                                        .size(18.0)
+                                                    egui::RichText::new(if self.conf.enabled { "🎵 Clickbot Active" } else { "⏸️ Clickbot Inactive" })
+                                                        .size(20.0)
                                                         .strong()
-                                                        .color(if self.conf.enabled { egui::Color32::from_rgb(34, 197, 94) } else { egui::Color32::from_gray(160) })
+                                                        .color(if self.conf.enabled { egui::Color32::from_rgb(16, 185, 129) } else { egui::Color32::from_gray(180) })
                                                 );
                                                 ui.label(
-                                                    egui::RichText::new(if self.conf.enabled { "Audio feedback is active" } else { "Click to enable audio feedback" })
-                                                        .size(12.0)
-                                                        .color(egui::Color32::from_gray(140))
+                                                    egui::RichText::new(if self.conf.enabled {
+                                                        "Real-time audio feedback is running"
+                                                    } else {
+                                                        "Click the toggle to enable audio feedback"
+                                                    })
+                                                        .size(13.0)
+                                                        .color(egui::Color32::from_gray(160))
                                                 );
                                             });
                                         });
@@ -2570,22 +2687,36 @@ impl Bot {
     }
 
     fn show_audio_window(&mut self, ui: &mut egui::Ui) {
-        // Enhanced Noise Settings Section with modern card design
+        // Ultra-modern Noise Settings with glassmorphism
         egui::Frame::none()
-            .fill(egui::Color32::from_gray(24))
-            .rounding(egui::Rounding::same(12.0))
-            .inner_margin(egui::Margin::same(16.0))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(40)))
+            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(20.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("🔊").size(20.0));
-                    ui.add_space(8.0);
+                    // Modern icon with glow effect
+                    let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::hover()).0;
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        14.0,
+                        egui::Color32::from_rgba_premultiplied(255, 165, 0, 40)
+                    );
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "🔊",
+                        egui::FontId::proportional(16.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    ui.add_space(12.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Noise Settings").size(16.0).strong().color(egui::Color32::WHITE));
-                        ui.label(egui::RichText::new("Configure background audio").size(11.0).color(egui::Color32::from_gray(160)));
+                        ui.label(egui::RichText::new("Noise Settings").size(18.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Configure ambient audio feedback").size(12.0).color(egui::Color32::from_gray(180)));
                     });
                 });
-                ui.add_space(12.0);
+                ui.add_space(16.0);
 
                 ui.add_enabled_ui(
                     self.clickpack.has_noise() && !self.is_loading_clickpack(),
@@ -2704,52 +2835,105 @@ impl Bot {
             },
         );
         */
-        // Enhanced Audio Device Section
+        // Ultra-modern Audio Device Section with glassmorphism
         egui::Frame::none()
-            .fill(egui::Color32::from_gray(24))
-            .rounding(egui::Rounding::same(12.0))
-            .inner_margin(egui::Margin::same(16.0))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(40)))
+            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(20.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("🎧").size(20.0));
-                    ui.add_space(8.0);
+                    // Modern icon with glow effect
+                    let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::hover()).0;
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        14.0,
+                        egui::Color32::from_rgba_premultiplied(147, 51, 234, 40)
+                    );
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "🎧",
+                        egui::FontId::proportional(16.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    ui.add_space(12.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Audio Device").size(16.0).strong().color(egui::Color32::WHITE));
-                        ui.label(egui::RichText::new("Select your audio output device").size(11.0).color(egui::Color32::from_gray(160)));
+                        ui.label(egui::RichText::new("Audio Device").size(18.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Select your preferred output device").size(12.0).color(egui::Color32::from_gray(180)));
                     });
                 });
-                ui.add_space(12.0);
+                ui.add_space(16.0);
                 ui.add_enabled_ui(!self.conf.use_fmod, |ui| self.show_device_switcher(ui));
             });
 
-        ui.add_space(16.0);
+        ui.add_space(20.0);
 
-        // Enhanced Timing Settings Section
+        // Ultra-modern Timing Settings Section with glassmorphism
         egui::Frame::none()
-            .fill(egui::Color32::from_gray(24))
-            .rounding(egui::Rounding::same(12.0))
-            .inner_margin(egui::Margin::same(16.0))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(40)))
+            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(20.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("⏱️").size(20.0));
-                    ui.add_space(8.0);
+                    // Modern icon with glow effect
+                    let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(28.0), egui::Sense::hover()).0;
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        14.0,
+                        egui::Color32::from_rgba_premultiplied(59, 130, 246, 40)
+                    );
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "⏱️",
+                        egui::FontId::proportional(16.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    ui.add_space(12.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Timing Settings").size(16.0).strong().color(egui::Color32::WHITE));
-                        ui.label(egui::RichText::new("Configure audio timing and synchronization").size(11.0).color(egui::Color32::from_gray(160)));
+                        ui.label(egui::RichText::new("Timing Settings").size(18.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Precision audio timing controls").size(12.0).color(egui::Color32::from_gray(180)));
                     });
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(
-                            egui::Button::new("ℹ️")
-                                .fill(egui::Color32::from_gray(40))
-                                .rounding(egui::Rounding::same(6.0))
-                        ).on_hover_text("Timing configuration help").clicked() {
+                        // Modern help button with glow
+                        let help_size = egui::Vec2::splat(24.0);
+                        let (help_rect, help_response) = ui.allocate_exact_size(help_size, egui::Sense::click());
+
+                        if help_response.hovered() {
+                            ui.painter().circle_filled(
+                                help_rect.center(),
+                                12.0,
+                                egui::Color32::from_rgba_premultiplied(59, 130, 246, 40)
+                            );
+                        }
+
+                        ui.painter().circle_filled(
+                            help_rect.center(),
+                            10.0,
+                            egui::Color32::from_rgba_premultiplied(59, 130, 246, 180)
+                        );
+
+                        ui.painter().text(
+                            help_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "ℹ️",
+                            egui::FontId::proportional(12.0),
+                            egui::Color32::WHITE,
+                        );
+
+                        if help_response.clicked() {
                             // Could show help dialog
                         }
+
+                        help_response.on_hover_text("Timing configuration help");
                     });
                 });
-                ui.add_space(12.0);
+                ui.add_space(16.0);
 
                 self.show_timing_controls(ui);
             });
@@ -2758,6 +2942,69 @@ impl Bot {
     }
 
     fn show_timing_controls(&mut self, ui: &mut egui::Ui) {
+        // Enhanced timing mode selector with modern design
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Timing Mode").size(15.0).strong().color(egui::Color32::WHITE));
+            ui.add_space(8.0);
+
+            // Modern timing mode cards
+            ui.horizontal(|ui| {
+                for (mode, title, desc, color) in [
+                    (TimingMode::Responsive, "Responsive", "Live Play", egui::Color32::from_rgb(34, 197, 94)),
+                    (TimingMode::Hybrid, "Hybrid", "Balanced", egui::Color32::from_rgb(100, 150, 255)),
+                    (TimingMode::Synchronized, "Synchronized", "Recording", egui::Color32::from_rgb(147, 51, 234)),
+                ] {
+                    let selected = self.conf.timing_mode == mode;
+                    let card_size = egui::Vec2::new(100.0, 60.0);
+                    let (card_rect, card_response) = ui.allocate_exact_size(card_size, egui::Sense::click());
+
+                    if card_response.clicked() {
+                        self.conf.timing_mode = mode;
+                    }
+
+                    // Card background with selection state
+                    let bg_color = if selected {
+                        color
+                    } else if card_response.hovered() {
+                        egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), 60)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(40, 45, 55, 180)
+                    };
+
+                    ui.painter().rect_filled(card_rect, egui::Rounding::same(8.0), bg_color);
+
+                    if selected {
+                        ui.painter().rect_stroke(
+                            card_rect,
+                            egui::Rounding::same(8.0),
+                            egui::Stroke::new(2.0, egui::Color32::WHITE)
+                        );
+                    }
+
+                    // Card content
+                    let text_color = if selected { egui::Color32::WHITE } else { egui::Color32::from_gray(200) };
+                    ui.painter().text(
+                        card_rect.center() - egui::Vec2::new(0.0, 8.0),
+                        egui::Align2::CENTER_CENTER,
+                        title,
+                        egui::FontId::proportional(12.0),
+                        text_color,
+                    );
+                    ui.painter().text(
+                        card_rect.center() + egui::Vec2::new(0.0, 8.0),
+                        egui::Align2::CENTER_CENTER,
+                        desc,
+                        egui::FontId::proportional(10.0),
+                        if selected { egui::Color32::from_gray(220) } else { egui::Color32::from_gray(160) },
+                    );
+
+                    ui.add_space(4.0);
+                }
+            });
+        });
+
+        ui.add_space(16.0);
+
         // Enhanced in-game time toggle with modern design
         ui.horizontal(|ui| {
             let toggle_size = egui::Vec2::new(40.0, 22.0);
@@ -3770,24 +4017,32 @@ impl Bot {
     fn show_clickpack_window(&mut self, ui: &mut egui::Ui, modal: Arc<Mutex<Modal>>) {
         let is_loading_clickpack = self.is_loading_clickpack();
 
-        // Enhanced loading indicator with modern design
+        // Ultra-modern loading indicator with glassmorphism and animations
         if is_loading_clickpack {
             egui::Frame::none()
-                .fill(egui::Color32::from_gray(24))
-                .rounding(egui::Rounding::same(12.0))
-                .inner_margin(egui::Margin::same(32.0))
+                .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 180))
+                .rounding(egui::Rounding::same(20.0))
+                .inner_margin(egui::Margin::same(40.0))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 30)))
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.add_space(16.0);
+                        ui.add_space(20.0);
 
-                        // Custom animated loading spinner
-                        let spinner_size = 40.0;
+                        // Ultra-modern animated loading spinner with glow
+                        let spinner_size = 48.0;
                         let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(spinner_size), egui::Sense::hover());
                         let time = ui.input(|i| i.time);
-                        let rotation = time as f32 * 2.0;
+                        let rotation = time as f32 * 3.0;
 
-                        // Draw animated spinner
+                        // Glow effect background
                         let center = rect.center();
+                        ui.painter().circle_filled(
+                            center,
+                            spinner_size/2.0 + 8.0,
+                            egui::Color32::from_rgba_premultiplied(100, 150, 255, 20)
+                        );
+
+                        // Draw modern animated spinner with multiple rings
                         let radius = spinner_size / 2.0 - 4.0;
                         for i in 0..8 {
                             let angle = rotation + (i as f32 * std::f32::consts::PI / 4.0);
@@ -3912,47 +4167,123 @@ impl Bot {
         }
         ui.add_space(16.0);
 
-        // Enhanced ClickpackDB section with modern card design
+        // Ultra-modern ClickpackDB section with glassmorphism and gradient
         egui::Frame::none()
-            .fill(egui::Color32::from_gray(24))
-            .rounding(egui::Rounding::same(12.0))
-            .inner_margin(egui::Margin::same(16.0))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(40)))
+            .fill(egui::Color32::from_rgba_premultiplied(25, 30, 40, 160))
+            .rounding(egui::Rounding::same(16.0))
+            .inner_margin(egui::Margin::same(20.0))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 20)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("🗃️").size(20.0));
-                    ui.add_space(8.0);
+                    // Modern icon with animated glow
+                    let icon_rect = ui.allocate_exact_size(egui::Vec2::splat(32.0), egui::Sense::hover()).0;
+                    let time = ui.input(|i| i.time);
+                    let pulse = (time * 2.0).sin() * 0.3 + 0.7;
+
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        16.0 * pulse as f32,
+                        egui::Color32::from_rgba_premultiplied(255, 193, 7, 30)
+                    );
+                    ui.painter().circle_filled(
+                        icon_rect.center(),
+                        14.0,
+                        egui::Color32::from_rgba_premultiplied(255, 193, 7, 60)
+                    );
+                    ui.painter().text(
+                        icon_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "🗃️",
+                        egui::FontId::proportional(18.0),
+                        egui::Color32::WHITE,
+                    );
+
+                    ui.add_space(16.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("ClickpackDB").size(16.0).strong().color(egui::Color32::WHITE));
-                        ui.label(egui::RichText::new("Browse 300+ clickpacks online").size(11.0).color(egui::Color32::from_gray(160)));
+                        ui.label(egui::RichText::new("ClickpackDB").size(20.0).strong().color(egui::Color32::WHITE));
+                        ui.label(egui::RichText::new("Browse 300+ premium clickpacks online").size(13.0).color(egui::Color32::from_gray(180)));
                     });
                 });
 
-                ui.add_space(12.0);
+                ui.add_space(16.0);
 
                 ui.label(
-                    egui::RichText::new("ClickpackDB is a collection of 300+ clickpacks that can be easily downloaded from within dcd Live.")
-                        .size(12.0)
-                        .color(egui::Color32::from_gray(180))
+                    egui::RichText::new("ClickpackDB is a curated collection of 300+ high-quality clickpacks that can be instantly downloaded and used within DcD Live.")
+                        .size(13.0)
+                        .color(egui::Color32::from_gray(200))
                 );
 
-                ui.add_space(12.0);
+                ui.add_space(16.0);
 
                 ui.horizontal(|ui| {
                     if self.clickpack_db_open {
-                        if ui.add(
-                            egui::Button::new("Close ClickpackDB")
-                                .fill(egui::Color32::from_rgb(239, 68, 68))
-                                .rounding(egui::Rounding::same(8.0))
-                        ).on_hover_text("This can also be done by clicking ✖ on the ClickpackDB window").clicked() {
+                        // Modern close button with glow
+                        let close_size = egui::Vec2::new(140.0, 36.0);
+                        let (close_rect, close_response) = ui.allocate_exact_size(close_size, egui::Sense::click());
+
+                        if close_response.hovered() {
+                            ui.painter().rect_filled(
+                                close_rect.expand(2.0),
+                                egui::Rounding::same(12.0),
+                                egui::Color32::from_rgba_premultiplied(239, 68, 68, 40)
+                            );
+                        }
+
+                        ui.painter().rect_filled(
+                            close_rect,
+                            egui::Rounding::same(10.0),
+                            egui::Color32::from_rgb(239, 68, 68)
+                        );
+
+                        ui.painter().text(
+                            close_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "✖ Close ClickpackDB",
+                            egui::FontId::proportional(13.0),
+                            egui::Color32::WHITE,
+                        );
+
+                        if close_response.clicked() {
                             self.clickpack_db_open = false;
                         }
+                        close_response.on_hover_text("This can also be done by clicking ✖ on the ClickpackDB window");
                     } else {
-                        if ui.add(
-                            egui::Button::new("🚀 Open ClickpackDB")
-                                .fill(egui::Color32::from_rgb(100, 150, 255))
-                                .rounding(egui::Rounding::same(8.0))
-                        ).clicked() {
+                        // Modern open button with gradient and glow
+                        let open_size = egui::Vec2::new(160.0, 40.0);
+                        let (open_rect, open_response) = ui.allocate_exact_size(open_size, egui::Sense::click());
+
+                        // Glow effect
+                        if open_response.hovered() {
+                            ui.painter().rect_filled(
+                                open_rect.expand(3.0),
+                                egui::Rounding::same(14.0),
+                                egui::Color32::from_rgba_premultiplied(100, 150, 255, 60)
+                            );
+                        }
+
+                        // Gradient background
+                        ui.painter().rect_filled(
+                            open_rect,
+                            egui::Rounding::same(12.0),
+                            egui::Color32::from_rgb(100, 150, 255)
+                        );
+
+                        // Highlight
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(open_rect.min, egui::Vec2::new(open_rect.width(), open_rect.height() * 0.4)),
+                            egui::Rounding { nw: 12.0, ne: 12.0, sw: 0.0, se: 0.0 },
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, 30)
+                        );
+
+                        ui.painter().text(
+                            open_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "🚀 Open ClickpackDB",
+                            egui::FontId::proportional(14.0),
+                            egui::Color32::WHITE,
+                        );
+
+                        if open_response.clicked() {
                             self.clickpack_db_open = true;
                         }
                     }
