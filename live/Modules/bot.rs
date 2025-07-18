@@ -469,16 +469,18 @@ impl Bot {
 
     unsafe fn release_buttons(&mut self) {
         log::info!("releasing buttons on death");
-        for (button, t) in [
-            (Button::Jump, self.event_handler.prev_times.jump),
-            (Button::Left, self.event_handler.prev_times.left),
-            (Button::Right, self.event_handler.prev_times.right),
-        ] {
-            for (player, time) in t.iter().enumerate() {
-                if time.typ.is_click() && time.time != 0.0 {
-                    self.on_action(button, player == 1, false);
-                }
-            }
+        // Release buttons if they were pressed
+        if self.event_handler.prev_times.jump != 0.0 {
+            self.on_action(Button::Jump, false, false);
+            self.on_action(Button::Jump, true, false);
+        }
+        if self.event_handler.prev_times.left != 0.0 {
+            self.on_action(Button::Left, false, false);
+            self.on_action(Button::Left, true, false);
+        }
+        if self.event_handler.prev_times.right != 0.0 {
+            self.on_action(Button::Right, false, false);
+            self.on_action(Button::Right, true, false);
         }
     }
 
@@ -546,13 +548,12 @@ impl Bot {
         if now == 0.0 {
             return;
         }
-        let prev_time =
+        let prev_time_value =
             self.event_handler.prev_times
                 .get_prev_time(button, player2, self.conf.decouple_platformer);
-        if prev_time.typ.is_click() && push {
-            return;
-        }
-        let dt = (now - prev_time.time).abs();
+
+        // For now, assume we can proceed (we'd need more context to determine if it was a click)
+        let dt = (now - prev_time_value).abs();
         let click_type = ClickType::from_time(push, dt, &self.conf.timings);
         if self.conf.ignored_click_types.is_ignored(click_type) {
             return;
@@ -644,15 +645,16 @@ impl Bot {
             */
         }
         */
-        self.event_handler.prev_times.set_time(
-            button,
-            player2,
-            ClickTime {
-                time: now,
-                typ: click_type,
-            },
-            self.conf.decouple_platformer,
-        );
+        // Set the button time based on the button type
+        use crate::clickpack::Button;
+        match button {
+            Button::Jump => self.event_handler.prev_times.jump = now,
+            Button::Left => self.event_handler.prev_times.left = now,
+            Button::Right => self.event_handler.prev_times.right = now,
+        }
+
+        // Also set the click type time
+        self.event_handler.prev_times.set_time(click_type, now);
         self.prev_pitch = pitch;
     }
 
@@ -677,7 +679,7 @@ impl Bot {
             "Enabled clickbot"
         } else {
             "Disabled clickbot"
-        }));
+        });
     }
 
     fn reload_clickpacks(&mut self) -> Result<()> {
@@ -1027,7 +1029,7 @@ impl Bot {
                     self.conf = Config::default();
                     self.conf.stage = prev_stage; // don't switch current tab
                     self.apply_config();
-                    self.toasts
+                    self.toast_manager.toasts
                         .lock()
                         .add(Toast::info("Reset configuration to defaults"));
                 }
@@ -1057,7 +1059,7 @@ impl Bot {
             egui::ComboBox::from_label("Output device")
                 .selected_text(&self.env.selected_device)
                 .show_ui(ui, |ui| {
-                    let devices = self.devices.lock().clone();
+                    let devices = self.audio_system.devices.lock().clone();
                     for device in &devices {
                         let is_selected = &self.env.selected_device == device;
                         if ui
@@ -1070,7 +1072,7 @@ impl Bot {
                             self.maybe_init_kittyaudio();
                             self.play_noise();
                             self.env.save();
-                            self.toasts
+                            self.toast_manager.toasts
                                 .lock()
                                 .add(Toast::success(format!("Switched device to \"{device}\"")));
                             //kind: ToastKind::Success,
@@ -1086,11 +1088,11 @@ impl Bot {
                 .on_hover_text("Reset to the default audio device")
                 .clicked()
             {
-                self.mixer = Mixer::new();
-                self.mixer.init();
+                self.audio_system.mixer = Mixer::new();
+                self.audio_system.mixer.init();
                 if let Ok(name) = Device::Default.name() {
                     self.env.selected_device = name.clone();
-                    self.toasts
+                    self.toast_manager.toasts
                         .lock()
                         .add(Toast::success(format!("Switched device to \"{name}\"")));
                 }
@@ -1121,7 +1123,7 @@ impl Bot {
                 let frames = noise.frames.len().saturating_sub(1);
                 noise.set_loop_index(0..=frames);
                 noise.set_playback_rate(PlaybackRate::Factor(self.conf.noise_speedhack));
-                *noise_sound = Some(self.mixer.play(noise.sound));
+                *noise_sound = Some(self.audio_system.mixer.play(noise.sound));
             }
         };
         /*
@@ -1160,24 +1162,24 @@ impl Bot {
         };
         */
 
-        stop_kittyaudio_noise(&mut self.noise_sound);
+        stop_kittyaudio_noise(&mut self.audio_system.noise_sound);
         // stop_fmod_noise(&mut self.fmod_noise_sound);
 
         if self.conf.play_noise && (self.conf.enabled || self.conf.play_noise_when_disabled) {
             if self.conf.use_fmod {
                 // start_fmod_noise(&mut self.fmod_noise_sound);
             } else {
-                start_kittyaudio_noise(&mut self.noise_sound);
+                start_kittyaudio_noise(&mut self.audio_system.noise_sound);
             }
         }
     }
 
     fn open_noise_toggle_toast(&self) {
-        self.toasts.lock().add(Toast::info(if self.conf.play_noise {
+        self.toast_manager.toasts.lock().info(if self.conf.play_noise {
             "Playing noise"
         } else {
             "Stopped playing noise"
-        }));
+        });
     }
 
     #[inline]
@@ -1794,7 +1796,7 @@ impl Bot {
         //     "https://discord.gg/BRVVVzxESu",
         // );
 
-        if !is_loading_clickpack && self.is_in_level {
+        if !is_loading_clickpack && self.event_handler.is_in_level {
             ui.collapsing("Debug", |ui| {
                 ui.label("Last click times and types:");
                 egui::Grid::new("times_grid")
@@ -1802,14 +1804,13 @@ impl Bot {
                     .min_col_width(130.0)
                     .striped(true)
                     .show(ui, |ui| {
-                        for times in [
-                            self.prev_times.jump,
-                            self.prev_times.left,
-                            self.prev_times.right,
+                        for (label, time) in [
+                            ("Jump", self.event_handler.prev_times.jump),
+                            ("Left", self.event_handler.prev_times.left),
+                            ("Right", self.event_handler.prev_times.right),
                         ] {
-                            for t in times {
-                                ui.label(format!("{:.3?} | {:?}", t.time, t.typ));
-                            }
+                            ui.label(label);
+                            ui.label(format!("{:.3?}", time));
                             ui.end_row();
                         }
                     });

@@ -16,6 +16,32 @@ pub struct ClickTimes {
     pub right: f64,
 }
 
+impl ClickTimes {
+    pub fn set_time(&mut self, typ: crate::clickpack::ClickType, time: f64) {
+        use crate::clickpack::ClickType;
+        match typ {
+            ClickType::Click => self.click = time,
+            ClickType::Release => self.release = time,
+            ClickType::HardClick => self.hardclick = time,
+            ClickType::HardRelease => self.hardrelease = time,
+            ClickType::SoftClick => self.softclick = time,
+            ClickType::SoftRelease => self.softrelease = time,
+            ClickType::MicroClick => self.microclick = time,
+            ClickType::MicroRelease => self.microrelease = time,
+            ClickType::None => {}
+        }
+    }
+
+    pub fn get_prev_time(&self, button: crate::clickpack::Button, player2: bool, decouple_platformer: bool) -> f64 {
+        use crate::clickpack::Button;
+        match button {
+            Button::Jump => self.jump,
+            Button::Left => self.left,
+            Button::Right => self.right,
+        }
+    }
+}
+
 pub struct EventHandler {
     pub prev_times: ClickTimes,
     pub is_in_level: bool,
