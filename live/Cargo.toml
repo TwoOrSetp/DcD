@@ -1,11 +1,10 @@
 [package]
-name = "DcDLive"
-version = "0.1.0"
+name = "dcdlive"
+version = "0.1.4"
 edition = "2021"
 build = "build.rs"
 
 [lib]
-path = "Modules/lib.rs"
 crate-type = ["staticlib"] # `cdylib` for DLL, `staticlib` for Geode
 
 [profile.release]

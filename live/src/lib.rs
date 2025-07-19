@@ -88,7 +88,7 @@ pub unsafe extern "system" fn DllMain(
             CreateThread(
                 None,
                 0,
-                Some(DcDlive_main),
+                Some(zcblive_main),
                 Some(dll),
                 THREAD_CREATION_FLAGS(0),
                 None,
@@ -96,7 +96,7 @@ pub unsafe extern "system" fn DllMain(
             .unwrap();
         }
         DLL_PROCESS_DETACH => {
-            DcDlive_uninitialize();
+            zcblive_uninitialize();
             FreeLibraryAndExitThread(std::mem::transmute::<_, HMODULE>(dll), 0);
         }
         _ => {}
@@ -105,7 +105,7 @@ pub unsafe extern "system" fn DllMain(
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_wgl_swap_buffers(hdc: HDC) {
+unsafe extern "C" fn zcblive_on_wgl_swap_buffers(hdc: HDC) {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         log::info!("wglSwapBuffers hooked");
@@ -139,22 +139,22 @@ fn hk_wgl_swap_buffers(hdc: HDC) -> i32 {
         if hdc == HDC(std::ptr::null_mut()) {
             return h_wglSwapBuffers.call(hdc);
         }
-        DcDlive_on_wgl_swap_buffers(hdc);
+        zcblive_on_wgl_swap_buffers(hdc);
         h_wglSwapBuffers.call(hdc)
     }
 }
 
 /// Main function, first argument is unused
 #[no_mangle]
-unsafe extern "system" fn DcDlive_main(_hmod: *mut c_void) -> u32 {
-    DcDlive_initialize();
+unsafe extern "system" fn zcblive_main(_hmod: *mut c_void) -> u32 {
+    zcblive_initialize();
     1
 }
 
 // DLL externs
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_initialize() {
+unsafe extern "C" fn zcblive_initialize() {
     // wait for enter key on panics
     let panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info: &std::panic::PanicInfo<'_>| {
@@ -196,10 +196,13 @@ unsafe fn init_gl_hook() {
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_uninitialize() {
+unsafe extern "C" fn zcblive_uninitialize() {
     log::info!("saving config & env before detach...");
-    BOT.conf.save();
-    BOT.env.save();
+    {
+        let bot = BOT.conf();
+        bot.conf.save();
+        bot.env.save();
+    }
 
     #[cfg(not(feature = "geode"))]
     let _ = hooks::disable_hooks().map_err(|e| log::error!("failed to disable hooks: {e}"));
@@ -209,66 +212,66 @@ unsafe extern "C" fn DcDlive_uninitialize() {
         .disable()
         .map_err(|e| log::error!("failed to disable wglSwapBuffers: {e}"))
         .is_ok()
-        && BOT.conf.show_console
+        && BOT.get_conf_show_console()
     {
         let _ = FreeConsole().map_err(|e| log::error!("FreeConsole failed: {e}"));
     }
 
-    BOT = Lazy::new(Box::<Bot>::default);
+    // Note: We can't reset the OnceLock, but that's okay for cleanup
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_action(button: u8, player2: bool, push: bool) {
+unsafe extern "C" fn zcblive_on_action(button: u8, player2: bool, push: bool) {
     BOT.on_action(Button::from_u8(button), player2, push);
 }
 
 /// optional implementation
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_reset() {
+unsafe extern "C" fn zcblive_on_reset() {
     BOT.on_reset();
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_set_is_in_level(is_in_level: bool) {
-    BOT.event_handler.is_in_level = is_in_level;
+unsafe extern "C" fn zcblive_set_is_in_level(is_in_level: bool) {
+    BOT.set_is_in_level(is_in_level);
 }
 
 /// optional implementation
 #[no_mangle]
-unsafe extern "C" fn DcDlive_set_playlayer_time(playlayer_time: f64) {
-    BOT.event_handler.playlayer_time = playlayer_time;
+unsafe extern "C" fn zcblive_set_playlayer_time(playlayer_time: f64) {
+    BOT.set_playlayer_time(playlayer_time);
 }
 
 /// can pass NULL to `playlayer`
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_init(playlayer: usize) {
+unsafe extern "C" fn zcblive_on_init(playlayer: usize) {
     BOT.on_init(playlayer);
 }
 
-/// equivalent to passing NULL to `DcDlive_on_init`. optional implementation
+/// equivalent to passing NULL to `zcblive_on_init`. optional implementation
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_quit() {
+unsafe extern "C" fn zcblive_on_quit() {
     BOT.on_exit();
 }
 
 /// optional implementation
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_death() {
+unsafe extern "C" fn zcblive_on_death() {
     BOT.on_death();
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_do_force_player2_sounds() -> bool {
-    BOT.conf.force_player2_sounds
+unsafe extern "C" fn zcblive_do_force_player2_sounds() -> bool {
+    BOT.get_conf_force_player2_sounds()
 }
 
 #[no_mangle]
-unsafe extern "C" fn DcDlive_do_use_alternate_hook() -> bool {
-    BOT.conf.use_alternate_hook
+unsafe extern "C" fn zcblive_do_use_alternate_hook() -> bool {
+    BOT.get_conf_use_alternate_hook()
 }
 
 /// required for release buttons on death
 #[no_mangle]
-unsafe extern "C" fn DcDlive_on_update(dt: f32) {
+unsafe extern "C" fn zcblive_on_update(dt: f32) {
     BOT.on_update(dt);
 }

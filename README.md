@@ -1,8 +1,8 @@
-# DcD - Original Of Mod ZcbLive By zeozeozeo
+# ZCB Live for Geode
 
-DcD Probably ClickBot
+ZCB Live is a next-generation Geometry Dash clickbot.
 
-# Best?:
+# Features
 
 - Easy to use
 - Platformer mode support
@@ -12,6 +12,15 @@ DcD Probably ClickBot
 - Realistic click sound algorithm
 - Configurable keybinds
 
+# ClickpackDB
+
+A regularly updated collection of 300+ clickpacks available ingame.
+
+- `Clickpack` > `ClickpackDB` > `Open ClickpackDB...`
+
 # Discord community
 
-- https://discord.gg/upYJtBuDJt
+Join the Discord server for support, clickpacks, video sharing, ...
+
+- https://discord.gg/clickbot
+- https://discord.gg/BRVVVzxESu

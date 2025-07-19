@@ -3,36 +3,10 @@
 version = 4
 
 [[package]]
-name = "DcDLive"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "built",
- "egui",
- "egui-keybind",
- "egui-modal",
- "egui-notify",
- "egui_clickpack_db",
- "egui_gl_hook",
- "fastrand",
- "kittyaudio",
- "log",
- "once_cell",
- "parking_lot",
- "retour",
- "rfd",
- "serde",
- "serde_json",
- "simple_logger",
- "ureq",
- "windows 0.58.0",
-]
-
-[[package]]
 name = "ab_glyph"
-version = "0.2.30"
+version = "0.2.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0f4f6fbdc5ee39f2ede9f5f3ec79477271a6d6a2baff22310d51736bda6cea"
+checksum = "2e53b0a3d5760cd2ba9b787ae0c6440ad18ee294ff71b05e3381c900a7d16cfd"
 dependencies = [
  "ab_glyph_rasterizer",
  "owned_ttf_parser",
@@ -586,6 +560,32 @@ name = "dasp_sample"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
+
+[[package]]
+name = "dcdlive"
+version = "0.1.4"
+dependencies = [
+ "anyhow",
+ "built",
+ "egui",
+ "egui-keybind",
+ "egui-modal",
+ "egui-notify",
+ "egui_clickpack_db",
+ "egui_gl_hook",
+ "fastrand",
+ "kittyaudio",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "retour",
+ "rfd",
+ "serde",
+ "serde_json",
+ "simple_logger",
+ "ureq",
+ "windows 0.58.0",
+]
 
 [[package]]
 name = "deranged"
@@ -1600,9 +1600,9 @@ dependencies = [
 
 [[package]]
 name = "owned_ttf_parser"
-version = "0.25.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22ec719bbf3b2a81c109a4e20b1f129b5566b7dce654bc3872f6a05abf82b2c4"
+checksum = "6b41438d2fc63c46c74a2203bf5ccd82c41ba04347b2fcf5754f230b167067d5"
 dependencies = [
  "ttf-parser",
 ]
@@ -2456,9 +2456,9 @@ dependencies = [
 
 [[package]]
 name = "ttf-parser"
-version = "0.25.1"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
 
 [[package]]
 name = "typenum"

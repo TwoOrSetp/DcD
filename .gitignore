@@ -52,5 +52,5 @@
 # clangd
 .cache/
 
-/DcD-build/*.dll
+/zcblive-build/*.dll
 # /src/embed.hpp

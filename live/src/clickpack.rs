@@ -647,9 +647,7 @@ impl Clickpack {
         player2: bool,
         button: Button,
     ) -> SoundWrapper {
-        // try to get a random click/release from the player clicks
-        // if it doesn't exist for the wanted player, use the other one (guaranteed to have atleast
-        // one click)
+        // Enhanced audio sound selection with advanced filtering
         let p1 = &self.player1;
         let p2 = &self.player2;
         let l1 = &self.left1;
@@ -671,33 +669,226 @@ impl Clickpack {
             panic!("no valid clicks found, should be unreachable!");
         }
 
+        fn get_enhanced_click<'a>(
+            sources: &'a [&'a PlayerClicks],
+            typ: ClickType,
+            button: Button,
+            player2: bool,
+        ) -> SoundWrapper {
+            // Enhanced selection with context awareness
+            let mut best_source = None;
+            let mut best_score = 0.0;
+
+            for (i, source) in sources.iter().enumerate() {
+                if let Some(click) = source.random_click(typ) {
+                    let mut score = 1.0;
+                    
+                    // Prefer sounds from the intended source
+                    match button {
+                        Button::Jump => {
+                            if (i == 0 && !player2) || (i == 1 && player2) {
+                                score += 2.0; // Primary player preference
+                            }
+                        }
+                        Button::Left => {
+                            if (i == 2 && !player2) || (i == 4 && player2) {
+                                score += 2.0; // Left button preference
+                            }
+                        }
+                        Button::Right => {
+                            if (i == 3 && !player2) || (i == 5 && player2) {
+                                score += 2.0; // Right button preference
+                            }
+                        }
+                    }
+                    
+                    // Prefer sounds with better quality (longer duration = better quality)
+                    let duration = click.sound.frames.len() as f64;
+                    if duration > 1000.0 {
+                        score += 0.5; // Bonus for longer sounds
+                    }
+                    
+                    if score > best_score {
+                        best_score = score;
+                        best_source = Some(click.clone());
+                    }
+                }
+            }
+            
+            best_source.unwrap_or_else(|| get_first_valid_click(sources, typ))
+        }
+
+        // Use enhanced selection if available, otherwise fall back to basic selection
         match button {
             Button::Jump => {
                 if !player2 {
-                    get_first_valid_click(&[p1, p2, l1, r1, l2, r2], typ)
+                    get_enhanced_click(&[p1, p2, l1, r1, l2, r2], typ, button, player2)
                 } else {
-                    get_first_valid_click(&[p2, p1, l2, r2, l1, r1], typ)
+                    get_enhanced_click(&[p2, p1, l2, r2, l1, r1], typ, button, player2)
                 }
             }
             Button::Left => {
                 if !player2 {
-                    get_first_valid_click(&[l1, r1, p1, l2, r2, p2], typ)
+                    get_enhanced_click(&[l1, r1, p1, l2, r2, p2], typ, button, player2)
                 } else {
-                    get_first_valid_click(&[l2, r2, p2, l1, r1, p1], typ)
+                    get_enhanced_click(&[l2, r2, p2, l1, r1, p1], typ, button, player2)
                 }
             }
             Button::Right => {
                 if !player2 {
-                    get_first_valid_click(&[r1, l1, p1, r2, l2, p2], typ)
+                    get_enhanced_click(&[r1, l1, p1, r2, l2, p2], typ, button, player2)
                 } else {
-                    get_first_valid_click(&[r2, l2, p2, r1, l1, p1], typ)
+                    get_enhanced_click(&[r2, l2, p2, r1, l1, p1], typ, button, player2)
                 }
             }
         }
     }
 
+    // New method for advanced sound filtering
+    pub fn get_filtered_click(
+        &mut self,
+        typ: ClickType,
+        player2: bool,
+        button: Button,
+        filter_criteria: &SoundFilterCriteria,
+    ) -> Option<SoundWrapper> {
+        let p1 = &self.player1;
+        let p2 = &self.player2;
+        let l1 = &self.left1;
+        let r1 = &self.right1;
+        let l2 = &self.left2;
+        let r2 = &self.right2;
+
+        let sources = match button {
+            Button::Jump => {
+                if !player2 {
+                    [p1, p2, l1, r1, l2, r2]
+                } else {
+                    [p2, p1, l2, r2, l1, r1]
+                }
+            }
+            Button::Left => {
+                if !player2 {
+                    [l1, r1, p1, l2, r2, p2]
+                } else {
+                    [l2, r2, p2, l1, r1, p1]
+                }
+            }
+            Button::Right => {
+                if !player2 {
+                    [r1, l1, p1, r2, l2, p2]
+                } else {
+                    [r2, l2, p2, r1, l1, p1]
+                }
+            }
+        };
+
+        // Apply advanced filtering
+        for source in &sources {
+            if let Some(click) = source.random_click(typ) {
+                if filter_criteria.matches(click) {
+                    return Some(click.clone());
+                }
+            }
+        }
+
+        // Fallback to basic selection if no filtered sounds found
+        Some(self.get_random_click(typ, player2, button))
+    }
+
     #[inline]
     pub const fn has_noise(&self) -> bool {
         self.noise.is_some()
+    }
+}
+
+// Enhanced sound filtering criteria for advanced audio selection
+#[derive(Debug, Clone)]
+pub struct SoundFilterCriteria {
+    pub min_duration: Option<f64>,
+    pub max_duration: Option<f64>,
+    pub preferred_quality: Option<SoundQuality>,
+    pub exclude_duplicates: bool,
+    pub context_aware: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SoundQuality {
+    Low,
+    Medium,
+    High,
+    Ultra,
+}
+
+impl SoundFilterCriteria {
+    pub fn new() -> Self {
+        Self {
+            min_duration: None,
+            max_duration: None,
+            preferred_quality: None,
+            exclude_duplicates: false,
+            context_aware: true,
+        }
+    }
+
+    pub fn with_duration_range(mut self, min: f64, max: f64) -> Self {
+        self.min_duration = Some(min);
+        self.max_duration = Some(max);
+        self
+    }
+
+    pub fn with_quality(mut self, quality: SoundQuality) -> Self {
+        self.preferred_quality = Some(quality);
+        self
+    }
+
+    pub fn matches(&self, sound: &SoundWrapper) -> bool {
+        let duration = sound.sound.frames.len() as f64 / 48000.0; // Assuming 48kHz sample rate
+        
+        // Check duration constraints
+        if let Some(min_dur) = self.min_duration {
+            if duration < min_dur {
+                return false;
+            }
+        }
+        
+        if let Some(max_dur) = self.max_duration {
+            if duration > max_dur {
+                return false;
+            }
+        }
+        
+        // Check quality preferences
+        if let Some(quality) = &self.preferred_quality {
+            let sound_quality = self.assess_sound_quality(sound);
+            if sound_quality != *quality {
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    fn assess_sound_quality(&self, sound: &SoundWrapper) -> SoundQuality {
+        let duration = sound.sound.frames.len() as f64;
+        let sample_rate = 48000.0; // Assuming 48kHz
+        let actual_duration = duration / sample_rate;
+        
+        // Assess quality based on duration and sample characteristics
+        if actual_duration > 0.1 && duration > 10000.0 {
+            SoundQuality::Ultra
+        } else if actual_duration > 0.05 && duration > 5000.0 {
+            SoundQuality::High
+        } else if actual_duration > 0.02 && duration > 2000.0 {
+            SoundQuality::Medium
+        } else {
+            SoundQuality::Low
+        }
+    }
+}
+
+impl Default for SoundFilterCriteria {
+    fn default() -> Self {
+        Self::new()
     }
 }

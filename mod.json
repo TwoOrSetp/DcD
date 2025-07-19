@@ -1,18 +1,16 @@
-
 {
 	"geode": "4.6.3",
 	"gd": {
-		"win": "2.2074",
-		"mac": "2.2074"
+		"win": "2.2074"
 	},
-	"version": "v1.0.42",
-	"id": "twoorsetp.dcd",
-	"name": "DcD",
-	"developer": "zeozeozeo, twoorsetp",
-	"description": "Probably Best Clickbot",
+	"version": "v1.0.3",
+	"id": "tworsetp.dcd",
+	"name": "DcD Live",
+	"developer": "zeozeozeo, tworsetp",
+	"description": "Will Better",
 	"issues": {
-		"info": "Report any bugs/suggestions in the Discord server.!This Recode By twoorsetp orginial its zeozeozeo",
-		"url": "https://discord.gg/upYJtBuDJt"
+		"info": "Report any bugs/suggestions in the Discord server.",
+		"url": "https://discord.gg/BRVVVzxESu"
 	},
 	"tags": [
 		"music", "utility", "cheat"
